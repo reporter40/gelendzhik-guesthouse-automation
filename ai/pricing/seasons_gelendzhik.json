@@ -1,0 +1,21 @@
+{
+  "city": "Геленджик",
+  "apartments": {
+    "40": {"lot":"302043","base_price":4000,"max_guests":4},
+    "41": {"lot":"302052","base_price":4500,"max_guests":5},
+    "42": {"lot":"310322","base_price":4500,"max_guests":5},
+    "50": {"lot":"310313","base_price":7000,"max_guests":7}
+  },
+  "seasons": {
+    "january_april": {"months":[1,2,3,4],"multiplier":0.95},
+    "new_year": {"dates":["01-01","01-02","01-03","01-04","01-05","01-06","01-07","01-08"],"multiplier":1.6,"min_nights":3},
+    "may_june": {"months":[5,6],"multiplier":1.1},
+    "july": {"months":[7],"multiplier":2.0},
+    "august": {"months":[8],"multiplier":2.2},
+    "september": {"months":[9],"multiplier":1.3},
+    "october": {"months":[10],"multiplier":1.1},
+    "november_december": {"months":[11,12],"multiplier":0.9}
+  },
+  "modifiers": {"weekend":1.20,"urgent_3days":0.85,"long_7nights":0.90,"high_occupancy_80pct":1.10},
+  "limits": {"min":0.80,"max":3.00,"round_to":50}
+}

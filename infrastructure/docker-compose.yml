@@ -1,0 +1,117 @@
+# ═══════════════════════════════════════════════════════════════
+# Gelendzhik Guesthouse Automation Stack
+# n8n 2.x + PostgreSQL 16 + Qdrant + Whisper + Nginx Proxy Manager
+# Март 2026
+# ═══════════════════════════════════════════════════════════════
+services:
+
+  # ── POSTGRESQL 16 ───────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: gelendzhik-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_gelendzhik}
+      POSTGRES_USER: ${POSTGRES_USER:-n8n_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-n8n_user} -d ${POSTGRES_DB:-n8n_gelendzhik}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gelendzhik-net
+
+  # ── N8N 2.x ────────────────────────────────────────────────
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: gelendzhik-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n_gelendzhik}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n_user}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_HOST: ${N8N_HOST:-0.0.0.0}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_RUNNERS_ENABLED: "true"
+      NODE_ENV: production
+      WEBHOOK_URL: ${WEBHOOK_URL:-https://n8n.example.com/}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Moscow}
+      TZ: ${GENERIC_TIMEZONE:-Europe/Moscow}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../local-files:/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - gelendzhik-net
+
+  # ── QDRANT (векторная память AI) ───────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: gelendzhik-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - gelendzhik-net
+
+  # ── WHISPER ASR (транскрипция голоса) ──────────────────────
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: gelendzhik-whisper
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      ASR_MODEL: small
+      ASR_ENGINE: openai_whisper
+      ASR_MODEL_PATH: /data/cache
+    volumes:
+      - whisper_cache:/data/cache
+    restart: unless-stopped
+    networks:
+      - gelendzhik-net
+
+  # ── NGINX PROXY MANAGER (SSL + reverse proxy) ─────────────
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: gelendzhik-npm
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - npm_data:/data
+      - npm_certs:/etc/letsencrypt
+    restart: unless-stopped
+    networks:
+      - gelendzhik-net
+
+volumes:
+  postgres_data:
+  n8n_data:
+  qdrant_data:
+  whisper_cache:
+  npm_data:
+  npm_certs:
+
+networks:
+  gelendzhik-net:
+    driver: bridge

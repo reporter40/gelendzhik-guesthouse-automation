@@ -1,0 +1,27 @@
+Лист: dashboard — ключевые формулы
+B1 — Дата обновления:
+="Обновлён: "&TEXT(NOW(),"DD.MM.YYYY HH:MM")
+
+B3 — Выручка (год):
+=SUMIF(booking_pipeline!E:E,">="&DATE(YEAR(TODAY()),1,1),booking_pipeline!G:G)
+
+B4 — Чистая выручка:
+=SUMIF(booking_pipeline!E:E,">="&DATE(YEAR(TODAY()),1,1),booking_pipeline!H:H)
+
+B5 — Кол-во броней:
+=COUNTIF(booking_pipeline!E:E,">="&DATE(YEAR(TODAY()),1,1))
+
+B6 — Средний чек:
+=IFERROR(B3/B5,0)
+
+B7 — Доля прямых (%):
+=IFERROR(COUNTIF(booking_pipeline!F:F,"direct")/B5*100,0)
+
+B8 — Средняя комиссия (%):
+=IFERROR(AVERAGEIF(booking_pipeline!E:E,">="&DATE(YEAR(TODAY()),1,1),booking_pipeline!I:I),0)
+
+B9 — Допродажи:
+=SUMIF(upsell_tracker!F:F,TRUE,upsell_tracker!G:G)
+
+B10 — RevPAN:
+=IFERROR(B3/1460,0)

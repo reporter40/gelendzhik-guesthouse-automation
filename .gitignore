@@ -1,0 +1,45 @@
+# Secrets
+.env
+*.env.local
+*.env.production
+*.pem
+*.key
+*.p12
+
+# Database dumps
+backups/
+*.dump
+*.dump.gz
+
+# Docker volumes
+postgres_data/
+n8n_data/
+qdrant_data/
+whisper_cache/
+npm_data/
+npm_certs/
+evolution_data/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+
+# Temp
+tmp/
+*.tmp
+*.bak
