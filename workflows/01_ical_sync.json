@@ -1,1 +1,121 @@
-{"name":"01 — RC iCal Sync","nodes":[{"id":"t1","name":"Every 30 Minutes","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"parameters":{"rule":{"interval":[{"field":"minutes","minutesInterval":30}]}},"position":[100,300]},{"id":"s1","name":"Apartments","type":"n8n-nodes-base.code","typeVersion":2,"parameters":{"jsCode":"return [{\"id\":\"40\",\"lot\":\"302043\",\"name\":\"Номер 40\",\"base_price\":4000},{\"id\":\"41\",\"lot\":\"302052\",\"name\":\"Номер 41\",\"base_price\":4500},{\"id\":\"42\",\"lot\":\"310322\",\"name\":\"Номер 42\",\"base_price\":4500},{\"id\":\"50\",\"lot\":\"310313\",\"name\":\"Номер 50\",\"base_price\":7000}].map(a=>({json:a}));"},"position":[300,300]},{"id":"f1","name":"Fetch iCal","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"parameters":{"method":"GET","url":"=https://realtycalendar.ru/ical/{{ json.lot }}.ics","options":{"response":{"response":{"responseFormat":"text"}},"timeout":30000}},"position":[500,300],"onError":"continueRegularOutput"},{"id":"p1","name":"Parse","type":"n8n-nodes-base.code","typeVersion":2,"parameters":{"jsCode":"const t=input.first().json.data||'';if(!t||t.length<20)return[{json:{events:[],count:0}}];const l=t.split('\\n'),e=[];let c={};for(const x of l){const s=x.trim();if(s==='BEGIN:VEVENT')c={};if(s.startsWith('DTSTART'))c.start=s.split(':').pop().substring(0,8);if(s.startsWith('DTEND'))c.end=s.split(':').pop().substring(0,8);if(s.startsWith('SUMMARY'))c.summary=s.split(':').slice(1).join(':');if(s==='END:VEVENT'&&c.start)e.push({...c})}return[{json:{events:e,count:e.length}}];"},"position":[700,300]}],"connections":{"Every 30 Minutes":{"main":[[{"node":"Apartments","type":"main","index":0}]]},"Apartments":{"main":[[{"node":"Fetch iCal","type":"main","index":0}]]},"Fetch iCal":{"main":[[{"node":"Parse","type":"main","index":0}]]}},"settings":{"executionOrder":"v1"},"tags":[{"name":"ical"},{"name":"sync"}]}
+{
+  "name": "01 — RC iCal Sync",
+  "nodes": [
+    {
+      "id": "t1",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "id": "s1",
+      "name": "Apartments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "return [{\"id\":\"40\",\"lot\":\"302043\",\"name\":\"Номер 40\",\"base_price\":4000},{\"id\":\"41\",\"lot\":\"302052\",\"name\":\"Номер 41\",\"base_price\":4500},{\"id\":\"42\",\"lot\":\"310322\",\"name\":\"Номер 42\",\"base_price\":4500},{\"id\":\"50\",\"lot\":\"310313\",\"name\":\"Номер 50\",\"base_price\":7000}].map(a=>({json:a}));"
+      },
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "id": "f1",
+      "name": "Fetch iCal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "parameters": {
+        "method": "GET",
+        "url": "=https://realtycalendar.ru/ical/{{ json.lot }}.ics",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "position": [
+        500,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "p1",
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const t=input.first().json.data||'';if(!t||t.length<20)return[{json:{events:[],count:0}}];const l=t.split('\\n'),e=[];let c={};for(const x of l){const s=x.trim();if(s==='BEGIN:VEVENT')c={};if(s.startsWith('DTSTART'))c.start=s.split(':').pop().substring(0,8);if(s.startsWith('DTEND'))c.end=s.split(':').pop().substring(0,8);if(s.startsWith('SUMMARY'))c.summary=s.split(':').slice(1).join(':');if(s==='END:VEVENT'&&c.start)e.push({...c})}return[{json:{events:e,count:e.length}}];"
+      },
+      "position": [
+        700,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Apartments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apartments": {
+      "main": [
+        [
+          {
+            "node": "Fetch iCal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch iCal": {
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "ical"
+    },
+    {
+      "name": "sync"
+    }
+  ],
+  "id": "4a846531ec22acc6"
+}

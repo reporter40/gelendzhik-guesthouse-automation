@@ -1,0 +1,82 @@
+{
+  "name": "04 — Daily Pricing (Auto-Update RC)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "t1",
+      "name": "Daily 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { id: '40', base: 4000, lot: '302043' },\n  { id: '41', base: 4500, lot: '302052' },\n  { id: '42', base: 4500, lot: '310322' },\n  { id: '50', base: 7000, lot: '310313' }\n].map(a => ({ json: a }));"
+      },
+      "id": "s1",
+      "name": "Property Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://realtycalendar.ru/api/v1/lots/{{$json.lot}}/prices",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prices",
+              "value": "={{ $node[\"Pricing Logic\"].json.prices_obj }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "h1",
+      "name": "Update RC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "realty_calendar_v1"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 06:00": {
+      "main": [
+        [
+          {
+            "node": "Property Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "c78bcb577baa7ffe",
+  "active": false
+}

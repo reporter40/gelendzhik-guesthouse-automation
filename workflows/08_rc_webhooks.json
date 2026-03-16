@@ -1,0 +1,160 @@
+{
+  "name": "08 — RC Webhooks Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "realtycalendar/webhook",
+        "options": {}
+      },
+      "id": "w1",
+      "name": "RC Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [ 100, 300 ],
+      "webhookId": "realty_calendar_sync_hook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "delete_booking"
+            }
+          ]
+        }
+      },
+      "id": "s1",
+      "name": "Is Delete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [ 300, 200 ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE bookings SET status = 'deleted' WHERE rc_id = {{ $json.data.booking.id }};"
+      },
+      "id": "db1",
+      "name": "Update DataBase (Delete)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [ 500, 100 ],
+      "credentials": {
+         "postgres": { "id": "gelendzhik_db" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "create_booking"
+            }
+          ]
+        }
+      },
+      "id": "s2",
+      "name": "Is Create?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [ 500, 300 ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1naVBM9qEhZVLFY9bmTRKQtVwruv94vCO35QC4IBNsdA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "booking_pipeline",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "id": "gs1",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [ 900, 200 ],
+      "credentials": {
+        "googleApi": {
+          "id": "google_service_account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ID: $json.data.booking.id,\n    Status: $json.data.booking.status || 'booking',\n    Apartment: $json.data.booking.apartment_id || $json.data.booking.rent_object_id,\n    Guest: $json.data.booking.guest_name,\n    CheckIn: $json.data.booking.checkin || $json.data.booking.date_from,\n    CheckOut: $json.data.booking.checkout || $json.data.booking.date_to,\n    Source: $json.data.booking.source || 'direct',\n    Total: $json.data.booking.price\n  }\n}];"
+      },
+      "id": "c1",
+      "name": "Format for Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [ 700, 200 ]
+    }
+  ],
+  "connections": {
+    "RC Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Delete?": {
+      "main": [
+        [
+          {
+            "node": "Update DataBase (Delete)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Create?": {
+      "main": [
+        [
+          {
+            "node": "Format for Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Sheets": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "31f66ba2b251b54c"
+}

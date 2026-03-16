@@ -1,0 +1,102 @@
+{
+  "name": "03 — Guest Journey (Automated Touchpoints)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "t1",
+      "name": "Hourly Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM bookings WHERE status = 'confirmed';"
+      },
+      "id": "db1",
+      "name": "Get Bookings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nreturn input.all().map(item => {\n  const checkin = new Date(item.json.checkin_date);\n  const daysTo = Math.ceil((checkin - now) / 86400000);\n  item.json.days_to_checkin = daysTo;\n  return item;\n});"
+      },
+      "id": "c1",
+      "name": "Calculate Days",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.guest_chat_id }}",
+        "text": "={{ $node[\"Messages\"].json.text }}",
+        "additionalFields": {}
+      },
+      "id": "r1",
+      "name": "Send Guest Bot",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_guest_bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Hourly Check": {
+      "main": [
+        [
+          {
+            "node": "Get Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bookings": {
+      "main": [
+        [
+          {
+            "node": "Calculate Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "af40ef5656b78bc0"
+}

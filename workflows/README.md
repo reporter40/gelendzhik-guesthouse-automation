@@ -11,6 +11,7 @@
 | 05 | 05_weekly_report.json | Дайджест каждое воскресенье 20:00 |
 | 06 | 06_watchdog.json | Мониторинг здоровья системы |
 | 07 | 07_error_handler.json | Глобальный обработчик ошибок |
+| 08 | 08_rc_webhooks.json | [NEW] Обработка Webhooks от RealtyCalendar |
 
 ## После импорта
 1. Открыть каждый node с ⚠️

@@ -1,0 +1,52 @@
+{
+  "name": "07 — Global Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e1",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-5269741256",
+        "text": "=🚨 *Ошибка в системе Guesthouse*\n\nРабочий процесс: `{{ $json.workflow.name }}`\nУзел: `{{ $json.node.name }}`\nОшибка: `{{ $json.error.message }}`\n\n[Открыть n8n](http://192.168.1.42:5678)",
+        "additionalFields": {
+          "parseMode": "Markdown"
+        }
+      },
+      "id": "r1",
+      "name": "Notify Owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        300,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Notify Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "39045942b0a8223e"
+}
