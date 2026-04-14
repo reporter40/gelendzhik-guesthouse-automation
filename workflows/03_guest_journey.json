@@ -16,10 +16,7 @@
       "name": "Hourly Check",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        100,
-        300
-      ]
+      "position": [100, 300]
     },
     {
       "parameters": {
@@ -30,10 +27,7 @@
       "name": "Get Bookings",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
-      "position": [
-        300,
-        300
-      ],
+      "position": [300, 300],
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db"
@@ -42,31 +36,35 @@
     },
     {
       "parameters": {
-        "jsCode": "const now = new Date();\nreturn input.all().map(item => {\n  const checkin = new Date(item.json.checkin_date);\n  const daysTo = Math.ceil((checkin - now) / 86400000);\n  item.json.days_to_checkin = daysTo;\n  return item;\n});"
+        "jsCode": "const now = new Date();\nreturn $input.all().map(item => {\n  const checkin = new Date(item.json.checkin_date);\n  const daysTo = Math.ceil((checkin - now) / 86400000);\n  item.json.days_to_checkin = daysTo;\n  return item;\n});"
       },
       "id": "c1",
       "name": "Calculate Days",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        500,
-        300
-      ]
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const MESSAGES = {\n  7: '👋 Добрый день! Через 7 дней вас ждёт заезд в наш гостевой дом в Геленджике. Будем рады встретить вас! 🏠\\n\\nЕсли есть вопросы — пишите в любое время.',\n  3: '😊 Через 3 дня — ваш заезд! Готовим всё для комфортного отдыха.\\n\\nНапомним: заезд с 14:00, выезд до 12:00. Нужна трансфер или помощь с дорогой — спрашивайте!',\n  1: '🔑 Завтра ваш день заезда! Ждём вас с 14:00.\\n\\nНапишите нам, когда будете подъезжать — встретим и покажем всё лично. До завтра! 👋',\n  0: '🎉 Добро пожаловать! Сегодня ваш заезд. Ждём с 14:00.\\n\\nЕсли уже добрались — напишите, выйдем встречать!'\n};\n\nreturn $input.all()\n  .filter(item => {\n    const d = item.json.days_to_checkin;\n    return MESSAGES[d] !== undefined && item.json.guest_chat_id;\n  })\n  .map(item => ({\n    json: {\n      ...item.json,\n      message_text: MESSAGES[item.json.days_to_checkin]\n    }\n  }));"
+      },
+      "id": "msg1",
+      "name": "Select Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
     },
     {
       "parameters": {
         "chatId": "={{ $json.guest_chat_id }}",
-        "text": "={{ $node[\"Messages\"].json.text }}",
+        "text": "={{ $json.message_text }}",
         "additionalFields": {}
       },
       "id": "r1",
       "name": "Send Guest Bot",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [
-        800,
-        300
-      ],
+      "position": [950, 300],
       "credentials": {
         "telegramApi": {
           "id": "telegram_guest_bot"
@@ -76,26 +74,16 @@
   ],
   "connections": {
     "Hourly Check": {
-      "main": [
-        [
-          {
-            "node": "Get Bookings",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Get Bookings", "type": "main", "index": 0}]]
     },
     "Get Bookings": {
-      "main": [
-        [
-          {
-            "node": "Calculate Days",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Calculate Days", "type": "main", "index": 0}]]
+    },
+    "Calculate Days": {
+      "main": [[{"node": "Select Message", "type": "main", "index": 0}]]
+    },
+    "Select Message": {
+      "main": [[{"node": "Send Guest Bot", "type": "main", "index": 0}]]
     }
   },
   "id": "af40ef5656b78bc0"

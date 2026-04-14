@@ -16,10 +16,7 @@
           ]
         }
       },
-      "position": [
-        100,
-        300
-      ]
+      "position": [100, 300]
     },
     {
       "id": "s1",
@@ -29,10 +26,7 @@
       "parameters": {
         "jsCode": "return [{\"id\":\"40\",\"lot\":\"302043\",\"name\":\"Номер 40\",\"base_price\":4000},{\"id\":\"41\",\"lot\":\"302052\",\"name\":\"Номер 41\",\"base_price\":4500},{\"id\":\"42\",\"lot\":\"310322\",\"name\":\"Номер 42\",\"base_price\":4500},{\"id\":\"50\",\"lot\":\"310313\",\"name\":\"Номер 50\",\"base_price\":7000}].map(a=>({json:a}));"
       },
-      "position": [
-        300,
-        300
-      ]
+      "position": [300, 300]
     },
     {
       "id": "f1",
@@ -41,7 +35,7 @@
       "typeVersion": 4.2,
       "parameters": {
         "method": "GET",
-        "url": "=https://realtycalendar.ru/ical/{{ json.lot }}.ics",
+        "url": "=https://realtycalendar.ru/ical/{{ $json.lot }}.ics",
         "options": {
           "response": {
             "response": {
@@ -51,10 +45,7 @@
           "timeout": 30000
         }
       },
-      "position": [
-        500,
-        300
-      ],
+      "position": [500, 300],
       "onError": "continueRegularOutput"
     },
     {
@@ -63,59 +54,85 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "parameters": {
-        "jsCode": "const t=input.first().json.data||'';if(!t||t.length<20)return[{json:{events:[],count:0}}];const l=t.split('\\n'),e=[];let c={};for(const x of l){const s=x.trim();if(s==='BEGIN:VEVENT')c={};if(s.startsWith('DTSTART'))c.start=s.split(':').pop().substring(0,8);if(s.startsWith('DTEND'))c.end=s.split(':').pop().substring(0,8);if(s.startsWith('SUMMARY'))c.summary=s.split(':').slice(1).join(':');if(s==='END:VEVENT'&&c.start)e.push({...c})}return[{json:{events:e,count:e.length}}];"
+        "jsCode": "const apt=$('Apartments').item.json;const t=$input.first().json.data||'';if(!t||t.length<20)return[{json:{events:[],count:0,apartment_id:apt.id}}];const l=t.split('\\n'),e=[];let c={};for(const x of l){const s=x.trim();if(s==='BEGIN:VEVENT')c={};if(s.startsWith('DTSTART'))c.start=s.split(':').pop().substring(0,8);if(s.startsWith('DTEND'))c.end=s.split(':').pop().substring(0,8);if(s.startsWith('SUMMARY'))c.summary=s.split(':').slice(1).join(':');if(s==='END:VEVENT'&&c.start)e.push({...c,apartment_id:apt.id})}return[{json:{events:e,count:e.length,apartment_id:apt.id}}];"
       },
-      "position": [
-        700,
-        300
-      ]
+      "position": [700, 300]
+    },
+    {
+      "id": "ex1",
+      "name": "Expand Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "jsCode": "const item=$input.first().json;if(!item.events||item.events.length===0)return[];return item.events.map(ev=>({json:ev}));"
+      },
+      "position": [900, 300]
+    },
+    {
+      "id": "db1",
+      "name": "Upsert Booking",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "bookings",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rc_id": "={{ $json.apartment_id + '-' + $json.start }}",
+            "apartment_id": "={{ $json.apartment_id }}",
+            "checkin_date": "={{ $json.start }}",
+            "checkout_date": "={{ $json.end }}",
+            "summary": "={{ $json.summary || 'Бронирование' }}",
+            "status": "confirmed"
+          }
+        },
+        "options": {
+          "conflictTarget": "rc_id",
+          "updateColumns": ["checkin_date", "checkout_date", "status"]
+        }
+      },
+      "position": [1100, 300],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
     "Every 30 Minutes": {
-      "main": [
-        [
-          {
-            "node": "Apartments",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Apartments", "type": "main", "index": 0}]]
     },
     "Apartments": {
-      "main": [
-        [
-          {
-            "node": "Fetch iCal",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Fetch iCal", "type": "main", "index": 0}]]
     },
     "Fetch iCal": {
-      "main": [
-        [
-          {
-            "node": "Parse",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Parse", "type": "main", "index": 0}]]
+    },
+    "Parse": {
+      "main": [[{"node": "Expand Events", "type": "main", "index": 0}]]
+    },
+    "Expand Events": {
+      "main": [[{"node": "Upsert Booking", "type": "main", "index": 0}]]
     }
   },
   "settings": {
     "executionOrder": "v1"
   },
   "tags": [
-    {
-      "name": "ical"
-    },
-    {
-      "name": "sync"
-    }
+    {"name": "ical"},
+    {"name": "sync"}
   ],
   "id": "4a846531ec22acc6"
 }

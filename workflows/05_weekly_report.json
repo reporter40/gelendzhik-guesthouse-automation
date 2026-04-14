@@ -8,9 +8,7 @@
             {
               "field": "weeks",
               "weeksInterval": 1,
-              "triggerAtDay": [
-                0
-              ],
+              "triggerAtDay": [0],
               "triggerAtHour": 20
             }
           ]
@@ -20,24 +18,18 @@
       "name": "Sunday 20:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        100,
-        300
-      ]
+      "position": [100, 300]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT count(*) as total, sum(price) as revenue FROM bookings WHERE created_at >= now() - interval '7 days';"
+        "query": "SELECT count(*) as total, COALESCE(sum(price), 0) as revenue FROM bookings WHERE created_at >= now() - interval '7 days';"
       },
       "id": "db1",
-      "name": "Check DB",
+      "name": "Weekly Stats",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 1,
-      "position": [
-        400,
-        200
-      ],
+      "position": [400, 300],
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db"
@@ -46,7 +38,7 @@
     },
     {
       "parameters": {
-        "chatId": "-5269741256",
+        "chatId": "={{ $env.OWNER_CHAT_ID }}",
         "text": "=📊 *Отчет за неделю*\n\nБронирований: {{ $json.total }}\nВыручка: {{ $json.revenue }}₽\n\nПриятного отдыха!",
         "additionalFields": {
           "parseMode": "Markdown"
@@ -56,10 +48,7 @@
       "name": "Send Owner",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [
-        500,
-        300
-      ],
+      "position": [650, 300],
       "credentials": {
         "telegramApi": {
           "id": "telegram_owner_bot"
@@ -69,26 +58,10 @@
   ],
   "connections": {
     "Sunday 20:00": {
-      "main": [
-        [
-          {
-            "node": "Weekly Stats",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Weekly Stats", "type": "main", "index": 0}]]
     },
     "Weekly Stats": {
-      "main": [
-        [
-          {
-            "node": "Send Owner",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Send Owner", "type": "main", "index": 0}]]
     }
   },
   "id": "eb7a16cfd8bfd3b4"

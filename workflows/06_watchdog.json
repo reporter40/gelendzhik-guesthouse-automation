@@ -16,35 +16,43 @@
       "name": "Every Hour",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        100,
-        300
-      ]
+      "position": [100, 300]
     },
     {
       "parameters": {
-        "url": "=https://hc-ping.com/{{$env.HEALTHCHECK_ICAL_UUID}}",
-        "options": {}
+        "url": "=https://hc-ping.com/{{ $env.HEALTHCHECK_ICAL_UUID }}",
+        "options": {
+          "timeout": 10000
+        }
       },
       "id": "h1",
-      "name": "Ping Healthchecks",
+      "name": "Ping iCal Health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [
-        300,
-        300
-      ]
+      "position": [300, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://hc-ping.com/{{ $env.HEALTHCHECK_PRICING_UUID }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "h2",
+      "name": "Ping Pricing Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [300, 400],
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
     "Every Hour": {
       "main": [
         [
-          {
-            "node": "Ping Healthchecks",
-            "type": "main",
-            "index": 0
-          }
+          {"node": "Ping iCal Health", "type": "main", "index": 0},
+          {"node": "Ping Pricing Health", "type": "main", "index": 0}
         ]
       ]
     }

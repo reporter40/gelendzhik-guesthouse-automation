@@ -11,7 +11,7 @@
       "name": "RC Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [ 100, 300 ],
+      "position": [100, 300],
       "webhookId": "realty_calendar_sync_hook"
     },
     {
@@ -29,20 +29,44 @@
       "name": "Is Delete?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [ 300, 200 ]
+      "position": [300, 200]
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE bookings SET status = 'deleted' WHERE rc_id = {{ $json.data.booking.id }};"
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "bookings",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "deleted"
+          }
+        },
+        "where": {
+          "values": [
+            {
+              "column": "rc_id",
+              "value": "={{ $json.data.booking.id }}"
+            }
+          ]
+        },
+        "options": {}
       },
       "id": "db1",
       "name": "Update DataBase (Delete)",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 1,
-      "position": [ 500, 100 ],
+      "typeVersion": 2.5,
+      "position": [500, 100],
       "credentials": {
-         "postgres": { "id": "gelendzhik_db" }
+        "postgres": {"id": "gelendzhik_db"}
       }
     },
     {
@@ -60,7 +84,58 @@
       "name": "Is Create?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [ 500, 300 ]
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $json.data.booking;\nreturn [{\n  json: {\n    rc_id:     String(b.id),\n    status:    b.status || 'booking',\n    apartment_id: String(b.apartment_id || b.rent_object_id || ''),\n    guest_name: b.guest_name || '',\n    checkin_date:  b.checkin  || b.date_from || '',\n    checkout_date: b.checkout || b.date_to   || '',\n    source:    b.source || 'direct',\n    price:     Number(b.price) || 0\n  }\n}];"
+      },
+      "id": "c1",
+      "name": "Format Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "bookings",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {
+          "conflictTarget": "rc_id",
+          "updateColumns": ["status", "checkin_date", "checkout_date", "price"]
+        }
+      },
+      "id": "db2",
+      "name": "Save to Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": {
+        "postgres": {"id": "gelendzhik_db"}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $('Format Booking').item.json;\nreturn [{\n  json: {\n    ID:       b.rc_id,\n    Status:   b.status,\n    Apartment: b.apartment_id,\n    Guest:    b.guest_name,\n    CheckIn:  b.checkin_date,\n    CheckOut: b.checkout_date,\n    Source:   b.source,\n    Total:    b.price\n  }\n}];"
+      },
+      "id": "c2",
+      "name": "Format for Sheets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
     },
     {
       "parameters": {
@@ -85,75 +160,38 @@
       "name": "Append to Google Sheets",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
-      "position": [ 900, 200 ],
+      "position": [1250, 300],
       "credentials": {
         "googleApi": {
           "id": "google_service_account"
         }
       }
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{\n  json: {\n    ID: $json.data.booking.id,\n    Status: $json.data.booking.status || 'booking',\n    Apartment: $json.data.booking.apartment_id || $json.data.booking.rent_object_id,\n    Guest: $json.data.booking.guest_name,\n    CheckIn: $json.data.booking.checkin || $json.data.booking.date_from,\n    CheckOut: $json.data.booking.checkout || $json.data.booking.date_to,\n    Source: $json.data.booking.source || 'direct',\n    Total: $json.data.booking.price\n  }\n}];"
-      },
-      "id": "c1",
-      "name": "Format for Sheets",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [ 700, 200 ]
     }
   ],
   "connections": {
     "RC Webhook": {
-      "main": [
-        [
-          {
-            "node": "Is Delete?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Is Delete?", "type": "main", "index": 0}]]
     },
     "Is Delete?": {
       "main": [
-        [
-          {
-            "node": "Update DataBase (Delete)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Is Create?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "Update DataBase (Delete)", "type": "main", "index": 0}],
+        [{"node": "Is Create?", "type": "main", "index": 0}]
       ]
     },
     "Is Create?": {
       "main": [
-        [
-          {
-            "node": "Format for Sheets",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "Format Booking", "type": "main", "index": 0}],
+        []
       ]
     },
+    "Format Booking": {
+      "main": [[{"node": "Save to Postgres", "type": "main", "index": 0}]]
+    },
+    "Save to Postgres": {
+      "main": [[{"node": "Format for Sheets", "type": "main", "index": 0}]]
+    },
     "Format for Sheets": {
-      "main": [
-        [
-          {
-            "node": "Append to Google Sheets",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Append to Google Sheets", "type": "main", "index": 0}]]
     }
   },
   "id": "31f66ba2b251b54c"

@@ -6,8 +6,8 @@
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 24
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
             }
           ]
         }
@@ -16,10 +16,7 @@
       "name": "Daily 06:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        100,
-        300
-      ]
+      "position": [100, 300]
     },
     {
       "parameters": {
@@ -29,52 +26,49 @@
       "name": "Property Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        300,
-        300
-      ]
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Сезонное ценообразование + weekend premium\nconst property = $json;\nconst month = new Date().getMonth() + 1;\n\n// Сезонный коэффициент\nlet multiplier = 1.0;\nif (month >= 6 && month <= 8) multiplier = 1.5;       // пик: июнь-август\nelse if (month === 5 || month === 9) multiplier = 1.2; // плечо: май, сентябрь\nelse multiplier = 0.85;                                // несезон\n\nconst basePrice = Math.round(property.base * multiplier / 100) * 100;\n\n// Строим prices_obj: цены на 60 дней вперёд\nconst prices_obj = {};\nconst today = new Date();\nfor (let i = 0; i < 60; i++) {\n  const d = new Date(today);\n  d.setDate(today.getDate() + i);\n  const dateStr = d.toISOString().split('T')[0];\n  const dayOfWeek = d.getDay(); // 0=вс, 6=сб\n  // Пятница и суббота +15%\n  const dayPrice = (dayOfWeek === 5 || dayOfWeek === 6)\n    ? Math.round(basePrice * 1.15 / 100) * 100\n    : basePrice;\n  prices_obj[dateStr] = dayPrice;\n}\n\nreturn [{ json: { ...property, prices_obj, final_price: basePrice } }];"
+      },
+      "id": "pl1",
+      "name": "Pricing Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://realtycalendar.ru/api/v1/lots/{{$json.lot}}/prices",
+        "url": "=https://realtycalendar.ru/api/v1/lots/{{ $json.lot }}/prices",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "prices",
-              "value": "={{ $node[\"Pricing Logic\"].json.prices_obj }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prices: $json.prices_obj }) }}",
         "options": {}
       },
       "id": "h1",
       "name": "Update RC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        700,
-        300
-      ],
+      "position": [700, 300],
       "credentials": {
         "httpHeaderAuth": {
           "id": "realty_calendar_v1"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
     "Daily 06:00": {
-      "main": [
-        [
-          {
-            "node": "Property Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
+      "main": [[{"node": "Property Data", "type": "main", "index": 0}]]
+    },
+    "Property Data": {
+      "main": [[{"node": "Pricing Logic", "type": "main", "index": 0}]]
+    },
+    "Pricing Logic": {
+      "main": [[{"node": "Update RC", "type": "main", "index": 0}]]
     }
   },
   "id": "c78bcb577baa7ffe",

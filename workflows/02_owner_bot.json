@@ -3,19 +3,16 @@
   "nodes": [
     {
       "parameters": {
-        "updates": [
-          "message"
-        ],
-        "additionalFields": {}
+        "updates": ["message"],
+        "additionalFields": {
+          "download": true
+        }
       },
       "id": "t1",
       "name": "Telegram Trigger",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1,
-      "position": [
-        100,
-        300
-      ],
+      "position": [100, 300],
       "credentials": {
         "telegramApi": {
           "id": "telegram_owner_bot"
@@ -37,10 +34,7 @@
       "name": "Is Voice?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [
-        300,
-        300
-      ]
+      "position": [300, 300]
     },
     {
       "parameters": {
@@ -49,18 +43,9 @@
         "sendQueryParameters": true,
         "queryParameters": {
           "parameters": [
-            {
-              "name": "task",
-              "value": "transcribe"
-            },
-            {
-              "name": "language",
-              "value": "ru"
-            },
-            {
-              "name": "output",
-              "value": "json"
-            }
+            {"name": "task", "value": "transcribe"},
+            {"name": "language", "value": "ru"},
+            {"name": "output", "value": "json"}
           ]
         },
         "sendBody": true,
@@ -80,10 +65,17 @@
       "name": "Whisper STT",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [
-        500,
-        200
-      ]
+      "position": [550, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Нормализуем текст из двух веток: voice → Whisper, text → Telegram\nconst whisperText = $json.text;\nconst telegramText = $('Telegram Trigger').item.json.message?.text;\nconst inputText = whisperText || telegramText || '';\nreturn [{ json: { input_text: inputText, chat_id: $('Telegram Trigger').item.json.message.chat.id } }];"
+      },
+      "id": "norm1",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 300]
     },
     {
       "parameters": {
@@ -91,21 +83,18 @@
         "url": "=http://host.docker.internal:11434/api/chat",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"qwen2.5:14b\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Вы — ИИ-помощник владельца гостевого дома в Геленджике. Отвечайте кратко и по делу.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $node[\\\"Telegram Trigger\\\"].json.message.text || $node[\\\"Whisper STT\\\"].json.text }}\"\n    }\n  ],\n  \"stream\": false\n}",
+        "jsonBody": "={\n  \"model\": \"qwen2.5:14b\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Вы — ИИ-помощник владельца гостевого дома в Геленджике. Отвечайте кратко и по делу.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.input_text }}\"\n    }\n  ],\n  \"stream\": false\n}",
         "options": {}
       },
       "id": "cl1",
       "name": "Ollama AI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [
-        750,
-        300
-      ]
+      "position": [1050, 300]
     },
     {
       "parameters": {
-        "chatId": "={{ $node[\"Telegram Trigger\"].json.message.chat.id }}",
+        "chatId": "={{ $('Normalize Input').item.json.chat_id }}",
         "text": "={{ $json.message.content }}",
         "additionalFields": {}
       },
@@ -113,10 +102,7 @@
       "name": "Send Reply",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.1,
-      "position": [
-        1000,
-        300
-      ],
+      "position": [1300, 300],
       "credentials": {
         "telegramApi": {
           "id": "telegram_owner_bot"
@@ -127,53 +113,28 @@
   "connections": {
     "Telegram Trigger": {
       "main": [
-        [
-          {
-            "node": "Is Voice?",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "Is Voice?", "type": "main", "index": 0}]
       ]
     },
     "Is Voice?": {
       "main": [
-        [
-          {
-            "node": "Whisper STT",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Ollama AI",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "Whisper STT", "type": "main", "index": 0}],
+        [{"node": "Normalize Input", "type": "main", "index": 0}]
       ]
     },
     "Whisper STT": {
       "main": [
-        [
-          {
-            "node": "Ollama AI",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "Normalize Input", "type": "main", "index": 0}]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [{"node": "Ollama AI", "type": "main", "index": 0}]
       ]
     },
     "Ollama AI": {
       "main": [
-        [
-          {
-            "node": "Send Reply",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "Send Reply", "type": "main", "index": 0}]
       ]
     }
   },
