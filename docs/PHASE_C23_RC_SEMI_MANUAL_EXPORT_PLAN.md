@@ -1,6 +1,6 @@
 # Phase C2.3 — RealtyCalendar Semi-manual Export
 
-> **Статус:** В работе  
+> **Статус:** РЕАЛИЗОВАН (2026-05-13)  
 > **Дата:** 2026-05-13  
 > **Предыдущий:** C2.2 (RC API Auth Verification — закрыт по официальному ответу RC)  
 > **Следующий:** C3 full (competitor monitoring) — параллельно с C2.3
