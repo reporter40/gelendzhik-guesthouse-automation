@@ -212,6 +212,23 @@ export type AddObservationInput = {
   notes?: string;
 };
 
+export type RCExportResponse = {
+  ok: boolean;
+  recommendation_id?: string;
+  apartment_id?: string;
+  apartment_name?: string;
+  lot_id?: string;
+  date_from?: string;
+  date_to?: string;
+  nights?: number;
+  recommended_price?: number;
+  prices_obj?: Record<string, number>;
+  manual_instruction?: string;
+  instruction_lines?: string[];
+  audit_id?: string;
+  error?: string;
+};
+
 export type AddCompetitorPriceInput = {
   source: string;
   title: string;
@@ -286,6 +303,54 @@ export async function fetchAuditLog(): Promise<AuditLogEntry[]> {
   if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
   const raw = body?.data ?? body ?? [];
   return Array.isArray(raw) ? raw : [];
+}
+
+export async function exportRecommendationForRC(
+  recommendation_id: string,
+): Promise<RCExportResponse> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "pricing_recommendation_export_rc", recommendation_id })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as RCExportResponse;
+}
+
+export async function markRecommendationManualApplied(
+  recommendation_id: string,
+  reason = "Применено вручную в RealtyCalendar",
+): Promise<{ ok: boolean; rec_id?: string; audit_id?: string; error?: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "pricing_recommendation_mark_manual_applied", recommendation_id, reason })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || (body && body.ok === false)) {
+    throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  }
+  return body;
+}
+
+export async function markRecommendationApplyFailed(
+  recommendation_id: string,
+  reason = "Применение не удалось",
+): Promise<{ ok: boolean; rec_id?: string; audit_id?: string; error?: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "pricing_recommendation_mark_apply_failed", recommendation_id, reason })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || (body && body.ok === false)) {
+    throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  }
+  return body;
 }
 
 export async function fetchMarketHistory(): Promise<MarketHistoryData> {

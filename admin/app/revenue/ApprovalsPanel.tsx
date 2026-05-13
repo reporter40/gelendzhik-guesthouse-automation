@@ -1,106 +1,287 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { approveRecommendationAction, rejectRecommendationAction } from "./actions";
-import type { PricingRecommendation, AuditLogEntry } from "@/lib/adminApi";
+import {
+  approveRecommendationAction,
+  rejectRecommendationAction,
+  exportRecommendationForRCAction,
+  markManualAppliedAction,
+  markApplyFailedAction,
+} from "./actions";
+import type { PricingRecommendation, AuditLogEntry, RCExportResponse } from "@/lib/adminApi";
 
 const REC_TYPE_LABELS: Record<string, { label: string; cls: string }> = {
-  gap_special_price: { label: "Спеццена",     cls: "bg-yellow-100 text-yellow-800" },
-  raise_price:       { label: "↑ Повысить",   cls: "bg-green-100 text-green-800"  },
-  lower_price:       { label: "↓ Снизить",    cls: "bg-red-100 text-red-800"      },
-  hold_price:        { label: "= Держать",    cls: "bg-gray-100 text-gray-600"    },
+  gap_special_price: { label: "Спеццена",   cls: "bg-yellow-100 text-yellow-800" },
+  raise_price:       { label: "↑ Повысить", cls: "bg-green-100 text-green-800"  },
+  lower_price:       { label: "↓ Снизить",  cls: "bg-red-100 text-red-800"      },
+  hold_price:        { label: "= Держать",  cls: "bg-gray-100 text-gray-600"    },
 };
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
-  draft:    { label: "черновик",  cls: "bg-gray-100 text-gray-500"   },
-  approved: { label: "одобрено", cls: "bg-blue-100 text-blue-700"   },
-  applied:  { label: "применено",cls: "bg-green-100 text-green-700" },
-  rejected: { label: "отклонено",cls: "bg-red-100 text-red-600"     },
+  draft:            { label: "черновик",           cls: "bg-gray-100 text-gray-500"    },
+  approved:         { label: "одобрено",            cls: "bg-blue-100 text-blue-700"    },
+  applied:          { label: "применено",           cls: "bg-green-100 text-green-700"  },
+  rejected:         { label: "отклонено",           cls: "bg-red-100 text-red-600"      },
+  exported:         { label: "экспортировано",      cls: "bg-amber-100 text-amber-700"  },
+  manually_applied: { label: "✓ применено вручную", cls: "bg-green-100 text-green-700"  },
+  apply_failed:     { label: "✗ ошибка применения", cls: "bg-red-100 text-red-700"      },
+};
+
+const AUDIT_LABELS: Record<string, { label: string; cls: string }> = {
+  approve:             { label: "✓ одобрено",             cls: "bg-blue-100 text-blue-700"   },
+  reject:              { label: "✗ отклонено",             cls: "bg-red-100 text-red-600"     },
+  export_rc_manual:    { label: "⇥ экспортировано",        cls: "bg-amber-100 text-amber-700" },
+  manual_applied:      { label: "✓ применено вручную",     cls: "bg-green-100 text-green-700" },
+  manual_apply_failed: { label: "✗ ошибка применения",     cls: "bg-red-100 text-red-700"     },
 };
 
 function fmt(n: number | null | undefined, fallback = "—") {
-  if (n == null || isNaN(n)) return fallback;
-  return n.toLocaleString("ru-RU");
+  if (n == null || isNaN(n as number)) return fallback;
+  return (n as number).toLocaleString("ru-RU");
 }
 
-function RecRow({ rec, onDone }: { rec: PricingRecommendation; onDone: () => void }) {
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback: select text
+    }
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+    >
+      {copied ? "✓ скопировано" : label}
+    </button>
+  );
+}
+
+function ExportPanel({ result }: { result: RCExportResponse }) {
+  const pricesJson = JSON.stringify(result.prices_obj ?? {}, null, 2);
+  const instructionText = result.instruction_lines
+    ? result.instruction_lines.join("\n")
+    : result.manual_instruction ?? "";
+
+  return (
+    <div className="mt-3 space-y-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-semibold text-amber-800">
+          Экспорт готов — скопируй данные и введи в RealtyCalendar
+        </span>
+        {result.nights != null && (
+          <span className="text-xs text-amber-700">
+            ({result.nights} ночей · {result.date_from} → {result.date_to})
+          </span>
+        )}
+      </div>
+
+      {/* prices_obj */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-medium text-gray-600">prices_obj (JSON)</span>
+          <CopyButton text={pricesJson} label="Копировать JSON" />
+        </div>
+        <pre className="bg-white border border-gray-200 rounded p-2 text-xs text-gray-800 overflow-x-auto max-h-48 font-mono">
+          {pricesJson}
+        </pre>
+      </div>
+
+      {/* manual_instruction */}
+      {instructionText && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-gray-600">Инструкция</span>
+            <CopyButton text={instructionText} label="Копировать инструкцию" />
+          </div>
+          <pre className="bg-white border border-gray-200 rounded p-2 text-xs text-gray-700 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+            {instructionText}
+          </pre>
+        </div>
+      )}
+
+      {result.audit_id && (
+        <p className="text-xs text-gray-400">audit_id: {result.audit_id}</p>
+      )}
+    </div>
+  );
+}
+
+function RecRow({
+  rec,
+  onDone,
+}: {
+  rec: PricingRecommendation;
+  onDone: () => void;
+}) {
   const [isPending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
+  const [exportResult, setExportResult] = useState<RCExportResponse | null>(null);
+  // Track local status so buttons update immediately before onDone reload
+  const [localStatus, setLocalStatus] = useState<string>(rec.status ?? "");
 
-  const canApprove = rec.status === "draft" || rec.status === "rejected";
-  const canReject  = rec.status === "draft" || rec.status === "approved";
+  const status = localStatus || (rec.status ?? "");
+  const canApprove  = status === "draft" || status === "rejected" || status === "apply_failed";
+  const canReject   = status === "draft" || status === "approved";
+  const canExport   = status === "approved";
+  const canMarkApplied = status === "exported";
+  const canMarkFailed  = status === "exported";
 
-  const handleApprove = () => {
+  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, onSuccess?: () => void) => {
     setErr(null);
     startTransition(async () => {
-      const res = await approveRecommendationAction(rec.id ?? "", "Одобрено владельцем");
-      if (!res.ok) setErr(res.error ?? "Ошибка");
-      else onDone();
+      const res = await fn();
+      if (!res.ok) { setErr(res.error ?? "Ошибка"); return; }
+      onSuccess?.();
+      onDone();
     });
   };
 
-  const handleReject = () => {
+  const handleApprove = () =>
+    run(() => approveRecommendationAction(rec.id ?? "", "Одобрено владельцем"));
+  const handleReject  = () =>
+    run(() => rejectRecommendationAction(rec.id ?? "", "Отклонено владельцем"));
+
+  const handleExport = () => {
     setErr(null);
     startTransition(async () => {
-      const res = await rejectRecommendationAction(rec.id ?? "", "Отклонено владельцем");
-      if (!res.ok) setErr(res.error ?? "Ошибка");
-      else onDone();
+      const res = await exportRecommendationForRCAction(rec.id ?? "");
+      if (!res.ok) { setErr(res.error ?? "Ошибка экспорта"); return; }
+      if (res.data) setExportResult(res.data);
+      setLocalStatus("exported");
+      // don't call onDone immediately — keep export panel visible
     });
   };
 
-  const recMeta  = REC_TYPE_LABELS[rec.recommendation_type] ?? { label: rec.recommendation_type, cls: "bg-gray-100 text-gray-600" };
-  const statMeta = STATUS_LABELS[rec.status] ?? { label: rec.status, cls: "bg-gray-100 text-gray-500" };
+  const handleMarkApplied = () =>
+    run(() => markManualAppliedAction(rec.id ?? ""), () => setLocalStatus("manually_applied"));
+
+  const handleMarkFailed = () =>
+    run(() => markApplyFailedAction(rec.id ?? ""), () => setLocalStatus("apply_failed"));
+
+  const recMeta  = REC_TYPE_LABELS[rec.recommendation_type ?? ""] ?? {
+    label: rec.recommendation_type ?? "—",
+    cls: "bg-gray-100 text-gray-600",
+  };
+  const statMeta = STATUS_LABELS[status] ?? { label: status, cls: "bg-gray-100 text-gray-500" };
   const conf = rec.confidence != null ? `${Math.round(rec.confidence * 100)}%` : "—";
 
   return (
-    <tr className={`hover:bg-gray-50 ${isPending ? "opacity-50" : ""}`}>
-      <td className="px-3 py-3 font-medium text-gray-900 whitespace-nowrap">№{rec.apartment_id}</td>
-      <td className="px-3 py-3 text-gray-700 whitespace-nowrap">
-        {rec.date_from} — {rec.date_to}
-        <br /><span className="text-gray-400 text-xs">{rec.nights} н.</span>
-      </td>
-      <td className="px-3 py-3">
-        <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${recMeta.cls}`}>{recMeta.label}</span>
-      </td>
-      <td className="px-3 py-3 text-right text-gray-600">{rec.current_price != null ? fmt(rec.current_price) : "—"}</td>
-      <td className="px-3 py-3 text-right text-gray-600">{rec.market_median != null ? fmt(rec.market_median) : "—"}</td>
-      <td className="px-3 py-3 text-right font-bold text-gray-900">{fmt(rec.recommended_price)}</td>
-      <td className="px-3 py-3 text-center text-gray-500">{conf}</td>
-      <td className="px-3 py-3 text-gray-600 max-w-xs text-xs">{rec.reason}</td>
-      <td className="px-3 py-3">
-        <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${statMeta.cls}`}>{statMeta.label}</span>
-      </td>
-      <td className="px-3 py-3">
-        <div className="flex gap-1 items-center">
-          {canApprove && (
-            <button
-              onClick={handleApprove}
-              disabled={isPending}
-              className="px-2 py-1 text-xs rounded border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              ✓ Одобрить
-            </button>
-          )}
-          {canReject && (
-            <button
-              onClick={handleReject}
-              disabled={isPending}
-              className="px-2 py-1 text-xs rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              ✗ Отклонить
-            </button>
-          )}
-          <button
-            disabled
-            title="Применение в RealtyCalendar — Phase C2.5"
-            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed"
-          >
-            ↗ Apply (C2.5)
-          </button>
-        </div>
-        {err && <p className="text-red-500 text-xs mt-1">{err}</p>}
-      </td>
-    </tr>
+    <>
+      <tr className={`hover:bg-gray-50 align-top ${isPending ? "opacity-50" : ""}`}>
+        <td className="px-3 py-3 font-medium text-gray-900 whitespace-nowrap">№{rec.apartment_id}</td>
+        <td className="px-3 py-3 text-gray-700 whitespace-nowrap">
+          {rec.date_from} — {rec.date_to}
+          <br /><span className="text-gray-400 text-xs">{rec.nights} н.</span>
+        </td>
+        <td className="px-3 py-3">
+          <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${recMeta.cls}`}>
+            {recMeta.label}
+          </span>
+        </td>
+        <td className="px-3 py-3 text-right text-gray-600">
+          {rec.current_price != null ? fmt(rec.current_price) : "—"}
+        </td>
+        <td className="px-3 py-3 text-right text-gray-600">
+          {rec.market_median != null ? fmt(rec.market_median) : "—"}
+        </td>
+        <td className="px-3 py-3 text-right font-bold text-gray-900">{fmt(rec.recommended_price)}</td>
+        <td className="px-3 py-3 text-center text-gray-500">{conf}</td>
+        <td className="px-3 py-3 text-gray-600 max-w-xs text-xs">{rec.reason}</td>
+        <td className="px-3 py-3">
+          <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${statMeta.cls}`}>
+            {statMeta.label}
+          </span>
+        </td>
+        <td className="px-3 py-3 min-w-[220px]">
+          <div className="flex flex-col gap-1">
+            <div className="flex flex-wrap gap-1">
+              {/* Approve */}
+              {canApprove && (
+                <button
+                  onClick={handleApprove}
+                  disabled={isPending}
+                  className="px-2 py-1 text-xs rounded border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors"
+                >
+                  ✓ Одобрить
+                </button>
+              )}
+              {/* Reject */}
+              {canReject && (
+                <button
+                  onClick={handleReject}
+                  disabled={isPending}
+                  className="px-2 py-1 text-xs rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                >
+                  ✗ Отклонить
+                </button>
+              )}
+              {/* Export for RC */}
+              {canExport && (
+                <button
+                  onClick={handleExport}
+                  disabled={isPending}
+                  className="px-2 py-1 text-xs rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
+                >
+                  ⇥ Export for RealtyCalendar
+                </button>
+              )}
+              {/* Mark Applied */}
+              {canMarkApplied && (
+                <button
+                  onClick={handleMarkApplied}
+                  disabled={isPending}
+                  className="px-2 py-1 text-xs rounded border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-40 transition-colors"
+                >
+                  ✓ Применено вручную
+                </button>
+              )}
+              {/* Mark Failed */}
+              {canMarkFailed && (
+                <button
+                  onClick={handleMarkFailed}
+                  disabled={isPending}
+                  className="px-2 py-1 text-xs rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                >
+                  ✗ Не удалось
+                </button>
+              )}
+              {/* Terminal / no-action states */}
+              {(status === "manually_applied" || status === "applied") && (
+                <span className="px-2 py-1 text-xs text-gray-400 italic">
+                  — завершено
+                </span>
+              )}
+              {status === "apply_failed" && !canApprove && (
+                <span className="px-2 py-1 text-xs text-red-400 italic">
+                  — повторите approve
+                </span>
+              )}
+            </div>
+            {/* API unavailable notice for exported/applied states */}
+            {(status === "exported" || status === "manually_applied" || status === "apply_failed") && (
+              <span className="text-xs text-gray-400 italic">
+                API недоступен — используйте ручной экспорт
+              </span>
+            )}
+            {err && <p className="text-red-500 text-xs">{err}</p>}
+          </div>
+        </td>
+      </tr>
+
+      {/* Export result panel — shown after clicking Export */}
+      {exportResult && (
+        <tr>
+          <td colSpan={10} className="px-3 pb-3">
+            <ExportPanel result={exportResult} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -111,12 +292,10 @@ export function ApprovalsPanel({
   recs: PricingRecommendation[];
   auditLog: AuditLogEntry[];
 }) {
-  const [recs, setRecs] = useState(initialRecs);
+  const [recs] = useState(initialRecs);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const handleDone = () => {
-    setRefreshKey((k) => k + 1);
-  };
+  const handleDone = () => setRefreshKey((k) => k + 1);
 
   if (recs.length === 0) {
     return (
@@ -133,7 +312,12 @@ export function ApprovalsPanel({
           <thead className="bg-gray-50">
             <tr>
               {["Номер", "Период", "Тип", "Текущая ₽", "Медиана ₽", "Рек. цена ₽", "Увер.", "Причина", "Статус", "Действия"].map((h) => (
-                <th key={h} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                <th
+                  key={h}
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
+                >
+                  {h}
+                </th>
               ))}
             </tr>
           </thead>
@@ -156,40 +340,53 @@ export function ApprovalsPanel({
               <thead className="bg-gray-50">
                 <tr>
                   {["Время", "Действие", "Апарт.", "Период", "Статус до → после", "Цена до / рек.", "Причина"].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    <th
+                      key={h}
+                      className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-100">
-                {auditLog.map((e) => (
-                  <tr key={e.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
-                      {new Date(e.created_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${
-                        e.action === "approve" ? "bg-blue-100 text-blue-700" :
-                        e.action === "reject"  ? "bg-red-100 text-red-600"  :
-                        "bg-gray-100 text-gray-600"
-                      }`}>
-                        {e.action === "approve" ? "✓ одобрено" : e.action === "reject" ? "✗ отклонено" : e.action}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-gray-700">
-                      {e.apartment_id ? `№${e.apartment_id}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
-                      {e.date_from && e.date_to ? `${e.date_from} — ${e.date_to}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
-                      {e.previous_status ?? "?"} → {e.new_status ?? "?"}
-                    </td>
-                    <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
-                      {e.old_price != null ? fmt(e.old_price) : "—"} / {e.new_price != null ? fmt(e.new_price) : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-gray-500 max-w-xs">{e.reason ?? "—"}</td>
-                  </tr>
-                ))}
+                {auditLog.map((e) => {
+                  const meta = AUDIT_LABELS[e.action] ?? {
+                    label: e.action,
+                    cls: "bg-gray-100 text-gray-600",
+                  };
+                  return (
+                    <tr key={e.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
+                        {new Date(e.created_at).toLocaleString("ru-RU", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-semibold ${meta.cls}`}>
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-gray-700">
+                        {e.apartment_id ? `№${e.apartment_id}` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                        {e.date_from && e.date_to ? `${e.date_from} — ${e.date_to}` : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                        {e.previous_status ?? "?"} → {e.new_status ?? "?"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                        {e.old_price != null ? fmt(e.old_price) : "—"} /{" "}
+                        {e.new_price != null ? fmt(e.new_price) : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-gray-500 max-w-xs">{e.reason ?? "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -311,3 +311,26 @@ ApplyAction(recommendation_id)
 ---
 
 *Discovery выполнен 2026-05-13. Изменений в БД, workflows, DNS или RealtyCalendar не производилось.*
+
+---
+
+## ОБНОВЛЕНИЕ 2026-05-13 — Официальный ответ RealtyCalendar
+
+**Получен официальный ответ службы поддержки RealtyCalendar:**
+
+> "API не предоставляем и нет такой возможности, открытого API у нас также нет."
+
+### Последствия
+
+| Пункт | Статус |
+|---|---|
+| API endpoint `POST /api/v1/lots/{lot_id}/prices` | **ЗАКРЫТ** — API не предоставляется |
+| C2.5 — Apply via RC API | **ОТМЕНЁН** |
+| Browser automation без явного решения | **ЗАПРЕЩЕНА** |
+| Semi-manual export (C2.3) | **НОВЫЙ ПУТЬ** |
+
+### Новый путь: C2.3 — Semi-manual export
+
+Владелец применяет цены **вручную** в интерфейсе RealtyCalendar на основе экспортированного `prices_obj`. Admin-панель генерирует JSON и инструкцию, отслеживает статус применения.
+
+Подробнее: `docs/PHASE_C23_RC_SEMI_MANUAL_EXPORT_PLAN.md`

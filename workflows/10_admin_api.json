@@ -50,7 +50,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log', 'market_history', 'add_competitor_observation',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
+        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log', 'market_history', 'add_competitor_observation', 'pricing_recommendation_export_rc', 'pricing_recommendation_mark_manual_applied', 'pricing_recommendation_mark_apply_failed',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
       }
     },
     {
@@ -1451,6 +1451,302 @@
           "responseCode": 400
         }
       }
+    },
+    {
+      "id": "if-export-rc",
+      "name": "If Export RC",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        2800
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "erc-cond",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_recommendation_export_rc"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prep-export-rc",
+      "name": "Prep Export RC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        2700
+      ],
+      "parameters": {
+        "jsCode": "\nconst body = $('Webhook').first().json.body || {};\nconst rec_id = (body.recommendation_id || '').trim().replace(/'/g, \"''\");\nif (!rec_id) {\n  // Use sentinel UUID so SQL stays valid; Format Export RC will check prep_err\n  return [{ json: { prep_err: 'recommendation_id is required', rec_id: '00000000-0000-0000-0000-000000000000' } }];\n}\nreturn [{ json: { prep_err: null, rec_id } }];\n"
+      }
+    },
+    {
+      "id": "export-rc-query",
+      "name": "Export RC Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3800,
+        2700
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rec_id, apartment_id, date_from, date_to, nights,\n  recommended_price, status, apartment_name, lot_id\nFROM (\n  SELECT pr.id::text AS rec_id, pr.apartment_id,\n    to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n    to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n    pr.nights, pr.recommended_price::float AS recommended_price, pr.status,\n    a.name AS apartment_name, a.lot_id::text AS lot_id\n  FROM pricing_recommendations pr\n  JOIN apartments a ON a.id::text = pr.apartment_id\n  WHERE pr.id = '{{ $json.rec_id }}'::uuid AND pr.status = 'approved'\n  UNION ALL\n  SELECT NULL,NULL,NULL,NULL,NULL,NULL,'_not_found',NULL,NULL\n) q\nLIMIT 1",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "format-export-rc",
+      "name": "Format Export RC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        2700
+      ],
+      "parameters": {
+        "jsCode": "\nconst prep = $('Prep Export RC').first().json;\nif (prep.prep_err) {\n  return [{ json: { ok: false, error: prep.prep_err } }];\n}\n\nconst row = $input.first().json;\nif (!row || !row.rec_id) {\n  return [{ json: { ok: false, error: 'recommendation not found or status is not approved' } }];\n}\n\n// Build prices_obj: keys = each night from date_from to date_to-1 inclusive\nconst dateFrom = new Date(row.date_from);\nconst dateTo   = new Date(row.date_to);\nconst price    = Math.round(row.recommended_price);\nconst nights   = row.nights || Math.round((dateTo - dateFrom) / 86400000);\n\nconst pricesObj = {};\nfor (let i = 0; i < nights; i++) {\n  const d = new Date(dateFrom);\n  d.setDate(d.getDate() + i);\n  const key = d.toISOString().slice(0, 10);\n  pricesObj[key] = price;\n}\n\nconst dfStr = row.date_from;\nconst dtStr = row.date_to;\nconst lastNight = new Date(dateTo);\nlastNight.setDate(lastNight.getDate() - 1);\nconst lastNightStr = lastNight.toISOString().slice(0, 10);\nconst aptName = row.apartment_name || '';\nconst lotId   = row.lot_id || '';\n\n// Use \\\\n (two chars) so n8n JSON serialization is safe; UI can replace with real newlines\nconst lines = [\n  `Открой RealtyCalendar → Управление ценами → ${aptName} (lot_id: ${lotId})`,\n  `Установи цену ${price} \\u20bd/\\u043d\\u043e\\u0447\\u044c \\u043d\\u0430 \\u043f\\u0435\\u0440\\u0438\\u043e\\u0434 ${dfStr} \\u2014 ${lastNightStr} \\u0432\\u043a\\u043b\\u044e\\u0447\\u0438\\u0442\\u0435\\u043b\\u044c\\u043d\\u043e.`,\n  `\\u041d\\u043e\\u0447\\u0435\\u0439: ${nights}`,\n  `\\u0421\\u043a\\u043e\\u043f\\u0438\\u0440\\u0443\\u0439 JSON (prices_obj) \\u0434\\u043b\\u044f batch-\\u0432\\u0432\\u043e\\u0434\\u0430.`,\n  `\\u041f\\u043e\\u0441\\u043b\\u0435 \\u043f\\u0440\\u0438\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f \\u043d\\u0430\\u0436\\u043c\\u0438 \"Mark as manually applied\" \\u0432 Admin \\u043f\\u0430\\u043d\\u0435\\u043b\\u0438.`,\n  `Recommendation ID: ${row.rec_id}`,\n];\n\nreturn [{\n  json: {\n    ok: true,\n    action: 'pricing_recommendation_export_rc',\n    recommendation_id: row.rec_id,\n    apartment_id: row.apartment_id,\n    apartment_name: aptName,\n    lot_id: lotId,\n    date_from: dfStr,\n    date_to: dtStr,\n    nights,\n    recommended_price: price,\n    prices_obj: pricesObj,\n    manual_instruction: lines.join('\\\\n'),\n    instruction_lines: lines,\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "export-rc-db-update",
+      "name": "Export RC DB Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        4200,
+        2700
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ (() => {\nconst r = $('Format Export RC').first().json;\nif (!r.ok) return `SELECT NULL AS audit_id`;\nconst metaObj = { prices_obj: r.prices_obj, manual_instruction: r.manual_instruction };\nconst metaEsc = JSON.stringify(metaObj).replace(/'/g, \"''\");\nreturn `WITH upd AS (\n  UPDATE pricing_recommendations SET status='exported', updated_at=NOW()\n  WHERE id='${r.recommendation_id}'::uuid AND status='approved'\n  RETURNING id::text AS rec_id, apartment_id, date_from, date_to, recommended_price::float\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status, apartment_id,\n     date_from, date_to, new_price, reason, actor, source, metadata)\n  SELECT rec_id::uuid, 'export_rc_manual', 'approved', 'exported',\n    apartment_id, date_from, date_to, recommended_price,\n    'Exported for manual RC application', 'admin', 'admin_panel',\n    '${metaEsc}'::jsonb\n  FROM upd\n  RETURNING id::text AS audit_id\n)\nSELECT COALESCE((SELECT audit_id FROM audit_ins LIMIT 1), NULL) AS audit_id`;\n})() }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "format-export-final",
+      "name": "Format Export Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        2700
+      ],
+      "parameters": {
+        "jsCode": "\nconst fmt = $('Format Export RC').first().json;\nif (!fmt.ok) {\n  return [{ json: fmt }];\n}\nconst db = $input.first().json;\nreturn [{ json: { ...fmt, audit_id: db?.audit_id ?? null } }];\n"
+      }
+    },
+    {
+      "id": "respond-export-rc",
+      "name": "Respond Export RC",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        4600,
+        2700
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-mark-applied",
+      "name": "If Mark Applied",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        3000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ma-cond",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_recommendation_mark_manual_applied"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "mark-applied-exec",
+      "name": "Mark Applied Exec",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3600,
+        2900
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ (() => {\nconst body = $('Webhook').first().json.body || {};\nconst rec_id = (body.recommendation_id || '').trim().replace(/'/g,\"''\");\nconst reason = (body.reason || 'Применено вручную в RealtyCalendar').replace(/'/g,\"''\");\nif (!rec_id) return `SELECT NULL AS audit_id, NULL AS rec_id, 'recommendation_id required' AS err`;\nreturn `WITH old AS (\n  SELECT id::text AS rec_id, status AS old_status\n  FROM pricing_recommendations WHERE id='${rec_id}'::uuid AND status IN ('exported','approved')\n),\nupd AS (\n  UPDATE pricing_recommendations SET status='manually_applied', updated_at=NOW()\n  WHERE id='${rec_id}'::uuid AND status IN ('exported','approved')\n  RETURNING id::text AS rec_id, apartment_id, date_from, date_to, recommended_price::float\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status, apartment_id,\n     date_from, date_to, new_price, reason, actor, source)\n  SELECT upd.rec_id::uuid, 'manual_applied', old.old_status, 'manually_applied',\n    upd.apartment_id, upd.date_from, upd.date_to, upd.recommended_price,\n    '${reason}', 'admin', 'admin_panel'\n  FROM upd JOIN old ON old.rec_id = upd.rec_id\n  RETURNING id::text AS audit_id\n)\nSELECT\n  COALESCE((SELECT audit_id FROM audit_ins LIMIT 1), NULL) AS audit_id,\n  COALESCE((SELECT rec_id FROM upd LIMIT 1), NULL) AS rec_id,\n  NULL AS err`;\n})() }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "format-mark-applied",
+      "name": "Format Mark Applied",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3800,
+        2900
+      ],
+      "parameters": {
+        "jsCode": "\nconst r = $input.first().json;\nif (r.err) return [{ json: { ok: false, error: r.err } }];\nif (!r.audit_id) return [{ json: { ok: false, error: 'recommendation not found or status not exportable' } }];\nreturn [{ json: { ok: true, action: 'pricing_recommendation_mark_manual_applied', rec_id: r.rec_id, audit_id: r.audit_id, message: 'Статус обновлён: manually_applied' } }];\n"
+      }
+    },
+    {
+      "id": "respond-mark-applied",
+      "name": "Respond Mark Applied",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        4000,
+        2900
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-mark-failed",
+      "name": "If Mark Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        3200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "mf-cond",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_recommendation_mark_apply_failed"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "mark-failed-exec",
+      "name": "Mark Failed Exec",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3600,
+        3100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ (() => {\nconst body = $('Webhook').first().json.body || {};\nconst rec_id = (body.recommendation_id || '').trim().replace(/'/g,\"''\");\nconst reason = (body.reason || 'Применение не удалось').replace(/'/g,\"''\");\nif (!rec_id) return `SELECT NULL AS audit_id, NULL AS rec_id, 'recommendation_id required' AS err`;\nreturn `WITH old AS (\n  SELECT id::text AS rec_id, status AS old_status\n  FROM pricing_recommendations WHERE id='${rec_id}'::uuid\n),\nupd AS (\n  UPDATE pricing_recommendations SET status='apply_failed', updated_at=NOW()\n  WHERE id='${rec_id}'::uuid\n  RETURNING id::text AS rec_id, apartment_id, date_from, date_to, recommended_price::float\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status, apartment_id,\n     date_from, date_to, new_price, reason, actor, source)\n  SELECT upd.rec_id::uuid, 'manual_apply_failed', old.old_status, 'apply_failed',\n    upd.apartment_id, upd.date_from, upd.date_to, upd.recommended_price,\n    '${reason}', 'admin', 'admin_panel'\n  FROM upd JOIN old ON old.rec_id = upd.rec_id\n  RETURNING id::text AS audit_id\n)\nSELECT\n  COALESCE((SELECT audit_id FROM audit_ins LIMIT 1), NULL) AS audit_id,\n  COALESCE((SELECT rec_id FROM upd LIMIT 1), NULL) AS rec_id,\n  NULL AS err`;\n})() }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "format-mark-failed",
+      "name": "Format Mark Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3800,
+        3100
+      ],
+      "parameters": {
+        "jsCode": "\nconst r = $input.first().json;\nif (r.err) return [{ json: { ok: false, error: r.err } }];\nif (!r.audit_id) return [{ json: { ok: false, error: 'recommendation not found' } }];\nreturn [{ json: { ok: true, action: 'pricing_recommendation_mark_apply_failed', rec_id: r.rec_id, audit_id: r.audit_id, message: 'Статус обновлён: apply_failed' } }];\n"
+      }
+    },
+    {
+      "id": "respond-mark-failed",
+      "name": "Respond Mark Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        4000,
+        3100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
     }
   ],
   "connections": {
@@ -2109,7 +2405,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Export RC",
             "type": "main",
             "index": 0
           }
@@ -2148,6 +2444,159 @@
           }
         ]
       ]
+    },
+    "If Export RC": {
+      "main": [
+        [
+          {
+            "node": "Prep Export RC",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Mark Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Export RC": {
+      "main": [
+        [
+          {
+            "node": "Export RC Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export RC Query": {
+      "main": [
+        [
+          {
+            "node": "Format Export RC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Export RC": {
+      "main": [
+        [
+          {
+            "node": "Export RC DB Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export RC DB Update": {
+      "main": [
+        [
+          {
+            "node": "Format Export Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Export Final": {
+      "main": [
+        [
+          {
+            "node": "Respond Export RC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Mark Applied": {
+      "main": [
+        [
+          {
+            "node": "Mark Applied Exec",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Applied Exec": {
+      "main": [
+        [
+          {
+            "node": "Format Mark Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Mark Applied": {
+      "main": [
+        [
+          {
+            "node": "Respond Mark Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Mark Failed": {
+      "main": [
+        [
+          {
+            "node": "Mark Failed Exec",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Failed Exec": {
+      "main": [
+        [
+          {
+            "node": "Format Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Mark Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -2157,5 +2606,6 @@
   "tags": [],
   "triggerCount": 0,
   "updatedAt": "2026-05-10T00:00:00.000Z",
-  "versionId": "a1-admin-api-v2"
+  "versionId": "a1-admin-api-v2",
+  "active": true
 }

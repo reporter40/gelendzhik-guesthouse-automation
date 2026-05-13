@@ -5,7 +5,11 @@ import {
   addCompetitorObservation,
   approveRecommendation,
   rejectRecommendation,
+  exportRecommendationForRC,
+  markRecommendationManualApplied,
+  markRecommendationApplyFailed,
   AdminApiError,
+  RCExportResponse,
 } from "@/lib/adminApi";
 import { requireAuth } from "@/lib/session";
 import { revalidatePath } from "next/cache";
@@ -58,6 +62,53 @@ export async function addCompetitorPriceAction(
   } catch (e) {
     const msg = e instanceof AdminApiError ? e.message : "Ошибка сохранения";
     return { ok: false, error: msg };
+  }
+}
+
+export type ExportRCState = ActionState & { data?: RCExportResponse };
+
+export async function exportRecommendationForRCAction(
+  recommendation_id: string,
+): Promise<ExportRCState> {
+  await requireAuth();
+  if (!recommendation_id) return { ok: false, error: "recommendation_id обязателен" };
+  try {
+    const result = await exportRecommendationForRC(recommendation_id);
+    if (!result.ok) return { ok: false, error: result.error ?? "Ошибка экспорта" };
+    revalidatePath("/revenue");
+    return { ok: true, data: result };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка экспорта" };
+  }
+}
+
+export async function markManualAppliedAction(
+  recommendation_id: string,
+  reason?: string,
+): Promise<ActionState> {
+  await requireAuth();
+  if (!recommendation_id) return { ok: false, error: "recommendation_id обязателен" };
+  try {
+    await markRecommendationManualApplied(recommendation_id, reason);
+    revalidatePath("/revenue");
+    return { ok: true, message: "Статус: manually_applied" };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка" };
+  }
+}
+
+export async function markApplyFailedAction(
+  recommendation_id: string,
+  reason?: string,
+): Promise<ActionState> {
+  await requireAuth();
+  if (!recommendation_id) return { ok: false, error: "recommendation_id обязателен" };
+  try {
+    await markRecommendationApplyFailed(recommendation_id, reason);
+    revalidatePath("/revenue");
+    return { ok: true, message: "Статус: apply_failed" };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка" };
   }
 }
 
