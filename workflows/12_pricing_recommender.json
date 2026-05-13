@@ -1,0 +1,131 @@
+{
+  "id": "12-pricing-recommender-c1",
+  "name": "12 — Pricing Recommender (C1)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      },
+      "id": "schedule-trigger-12",
+      "name": "Daily 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT gw.id AS gap_id, gw.apartment_id, a.name AS apartment_name,\n       a.base_price,\n       gw.gap_start AS date_from,\n       gw.gap_end   AS date_to,\n       gw.nights,\n       gw.estimated_loss\nFROM gap_windows gw\nJOIN apartments a ON a.id = gw.apartment_id\nWHERE gw.status = 'open'\n  AND gw.gap_start >= CURRENT_DATE\nORDER BY gw.gap_start",
+        "options": {}
+      },
+      "id": "load-gaps-12",
+      "name": "Load Gap Windows",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n  MIN(price_per_night)   AS market_min,\n  MAX(price_per_night)   AS market_max,\n  AVG(price_per_night)   AS market_avg,\n  COUNT(*)               AS market_count\nFROM competitor_prices\nWHERE date_from <= CURRENT_DATE + INTERVAL '90 days'\n  AND date_to   >= CURRENT_DATE",
+        "options": {}
+      },
+      "id": "load-market-12",
+      "name": "Load Market Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 460],
+      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge gap windows with market data\nconst gaps   = $('Load Gap Windows').all().map(i => i.json);\nconst mktRow = $('Load Market Data').first()?.json || {};\n\nconst marketMedian = mktRow.market_median ? Number(mktRow.market_median) : null;\nconst marketMin    = mktRow.market_min    ? Number(mktRow.market_min)    : null;\nconst marketMax    = mktRow.market_max    ? Number(mktRow.market_max)    : null;\nconst marketAvg    = mktRow.market_avg    ? Number(mktRow.market_avg)    : null;\nconst hasMarket    = marketMedian !== null;\n\nconst recs = [];\n\nfor (const g of gaps) {\n  const base   = g.base_price ? Number(g.base_price) : null;\n  const nights = Number(g.nights);\n  let recommended, recType, reason, confidence;\n\n  if (nights === 1) {\n    recType  = 'gap_special_price';\n    reason   = 'Короткое окно 1 ночь: лучше продать спецценой, чем оставить пустым.';\n    if (hasMarket && base) {\n      recommended = Math.max(base * 0.85, marketMedian * 0.80);\n      confidence  = 0.70;\n    } else if (base) {\n      recommended = base * 0.85;\n      confidence  = 0.45;\n    } else continue;\n  } else if (nights === 2) {\n    recType  = 'gap_special_price';\n    reason   = 'Окно 2 ночи: можно продать коротким заездом со сниженной ценой.';\n    if (hasMarket && base) {\n      recommended = Math.max(base * 0.90, marketMedian * 0.90);\n      confidence  = 0.70;\n    } else if (base) {\n      recommended = base * 0.90;\n      confidence  = 0.45;\n    } else continue;\n  } else {\n    recType  = 'gap_special_price';\n    reason   = 'Окно 3 ночи: можно продавать как короткий заезд без сильной скидки.';\n    if (hasMarket && base) {\n      recommended = Math.max(base, marketMedian * 0.95);\n      confidence  = 0.65;\n    } else if (base) {\n      recommended = base * 0.95;\n      confidence  = 0.50;\n    } else continue;\n  }\n\n  // Override: raise_price if market >> base\n  if (hasMarket && base && marketMedian > base * 1.20) {\n    recType    = 'raise_price';\n    recommended = Math.round(marketMedian * 0.90);\n    reason     = `Рынок (₽${Math.round(marketMedian)}) заметно выше базовой цены (₽${Math.round(base)}). Рекомендуем повысить цену.`;\n    confidence  = 0.65;\n  }\n  // Override: lower_price if market << base\n  if (hasMarket && base && marketMedian < base * 0.80) {\n    recType    = 'lower_price';\n    recommended = Math.round(marketMedian * 1.05);\n    reason     = `Рынок (₽${Math.round(marketMedian)}) ниже базовой цены (₽${Math.round(base)}). Есть риск простоя.`;\n    confidence  = 0.60;\n  }\n\n  recs.push({\n    apartment_id:        g.apartment_id,\n    date_from:           g.date_from,\n    date_to:             g.date_to,\n    nights,\n    current_price:       base,\n    market_min:          marketMin,\n    market_median:       marketMedian,\n    market_avg:          marketAvg,\n    market_max:          marketMax,\n    recommended_price:   Math.round(recommended),\n    recommendation_type: recType,\n    reason,\n    confidence,\n    source:              'c1_rules',\n    status:              'draft'\n  });\n}\n\nif (recs.length === 0) {\n  return [{ json: { _no_recs: true, message: 'No recommendations generated' } }];\n}\nreturn recs.map(r => ({ json: r }));\n"
+      },
+      "id": "calc-recommendations",
+      "name": "Calculate Recommendations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "loose"},
+          "combinator": "and",
+          "conditions": [{"id": "has-recs", "operator": {"type": "string", "operation": "notEmpty"},
+                          "leftValue": "={{ $json.apartment_id }}"}]
+        },
+        "options": {}
+      },
+      "id": "has-recs-check",
+      "name": "Has Recommendations?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO pricing_recommendations\n  (apartment_id, date_from, date_to, nights, current_price, market_min, market_median,\n   market_avg, market_max, recommended_price, recommendation_type, reason, confidence, source, status)\nVALUES ($1, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'draft')\nON CONFLICT (apartment_id, date_from)\nDO UPDATE SET\n  date_to              = EXCLUDED.date_to,\n  nights               = EXCLUDED.nights,\n  current_price        = EXCLUDED.current_price,\n  market_min           = EXCLUDED.market_min,\n  market_median        = EXCLUDED.market_median,\n  market_avg           = EXCLUDED.market_avg,\n  market_max           = EXCLUDED.market_max,\n  recommended_price    = EXCLUDED.recommended_price,\n  recommendation_type  = EXCLUDED.recommendation_type,\n  reason               = EXCLUDED.reason,\n  confidence           = EXCLUDED.confidence,\n  updated_at           = NOW()\nWHERE pricing_recommendations.status = 'draft'\nRETURNING apartment_id, date_from, recommended_price, recommendation_type, confidence",
+        "additionalFields": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.apartment_id, $json.date_from, $json.date_to, $json.nights, $json.current_price, $json.market_min, $json.market_median, $json.market_avg, $json.market_max, $json.recommended_price, $json.recommendation_type, $json.reason, $json.confidence, $json.source] }}"
+        },
+        "options": {}
+      },
+      "id": "upsert-recs",
+      "name": "Upsert Recommendations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM pricing_recommendations WHERE status='draft' AND date_from < CURRENT_DATE",
+        "options": {}
+      },
+      "id": "cleanup-old-recs",
+      "name": "Cleanup Old Recs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 460],
+      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+    }
+  ],
+  "connections": {
+    "Daily 08:00": {
+      "main": [
+        [{"node": "Load Gap Windows", "type": "main", "index": 0}],
+        [{"node": "Load Market Data",  "type": "main", "index": 0}]
+      ]
+    },
+    "Load Gap Windows": {
+      "main": [[{"node": "Calculate Recommendations", "type": "main", "index": 0}]]
+    },
+    "Load Market Data": {
+      "main": [[{"node": "Calculate Recommendations", "type": "main", "index": 1}]]
+    },
+    "Calculate Recommendations": {
+      "main": [[{"node": "Has Recommendations?", "type": "main", "index": 0}]]
+    },
+    "Has Recommendations?": {
+      "main": [
+        [{"node": "Upsert Recommendations", "type": "main", "index": 0}],
+        [{"node": "Cleanup Old Recs",       "type": "main", "index": 0}]
+      ]
+    },
+    "Upsert Recommendations": {
+      "main": [[{"node": "Cleanup Old Recs", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "12-pricing-recommender-v1",
+  "meta": {"templateCredsSetupCompleted": true},
+  "tags": []
+}

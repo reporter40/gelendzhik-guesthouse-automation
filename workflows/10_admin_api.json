@@ -384,7 +384,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  (SELECT json_agg(g ORDER BY g.estimated_loss DESC NULLS LAST, g.gap_start)\n   FROM (\n     SELECT gw.apartment_id, a.name AS apartment_name,\n            to_char(gw.gap_start,'YYYY-MM-DD') AS gap_start,\n            to_char(gw.gap_end,'YYYY-MM-DD')   AS gap_end,\n            gw.nights, gw.estimated_loss::float AS estimated_loss,\n            gw.recommendation, gw.status,\n            to_char(gw.detected_at,'YYYY-MM-DD') AS detected_at\n     FROM gap_windows gw\n     JOIN apartments a ON a.id = gw.apartment_id\n     WHERE gw.status = 'open' AND gw.gap_start >= CURRENT_DATE\n   ) g\n  ) AS gap_windows,\n  (SELECT json_agg(cp ORDER BY cp.date_from)\n   FROM (\n     SELECT source, title, url, location,\n            to_char(date_from,'YYYY-MM-DD') AS date_from,\n            to_char(date_to,'YYYY-MM-DD')   AS date_to,\n            price_per_night::float AS price_per_night,\n            rating::float AS rating, reviews_count, notes,\n            to_char(collected_at,'YYYY-MM-DD') AS collected_at\n     FROM competitor_prices\n     ORDER BY date_from\n   ) cp\n  ) AS competitor_prices,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_gaps,\n  (SELECT COALESCE(SUM(estimated_loss),0)::float FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_estimated_loss,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=1 AND gap_start>=CURRENT_DATE) AS one_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=2 AND gap_start>=CURRENT_DATE) AS two_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=3 AND gap_start>=CURRENT_DATE) AS three_night_gaps",
+        "query": "SELECT\n  (SELECT json_agg(g ORDER BY g.estimated_loss DESC NULLS LAST, g.gap_start)\n   FROM (\n     SELECT gw.apartment_id, a.name AS apartment_name,\n            to_char(gw.gap_start,'YYYY-MM-DD') AS gap_start,\n            to_char(gw.gap_end,'YYYY-MM-DD')   AS gap_end,\n            gw.nights, gw.estimated_loss::float AS estimated_loss,\n            gw.recommendation, gw.status,\n            to_char(gw.detected_at,'YYYY-MM-DD') AS detected_at\n     FROM gap_windows gw\n     JOIN apartments a ON a.id = gw.apartment_id\n     WHERE gw.status = 'open' AND gw.gap_start >= CURRENT_DATE\n   ) g\n  ) AS gap_windows,\n  (SELECT json_agg(cp ORDER BY cp.date_from)\n   FROM (\n     SELECT source, title, url, location, max_guests, rooms,\n            to_char(date_from,'YYYY-MM-DD') AS date_from,\n            to_char(date_to,'YYYY-MM-DD')   AS date_to,\n            price_per_night::float AS price_per_night,\n            rating::float AS rating, reviews_count, notes,\n            to_char(collected_at,'YYYY-MM-DD') AS collected_at\n     FROM competitor_prices ORDER BY date_from\n   ) cp\n  ) AS competitor_prices,\n  (SELECT json_agg(r ORDER BY r.date_from)\n   FROM (\n     SELECT apartment_id, to_char(date_from,'YYYY-MM-DD') AS date_from,\n            to_char(date_to,'YYYY-MM-DD') AS date_to, nights,\n            current_price::float AS current_price,\n            market_median::float AS market_median,\n            recommended_price::float AS recommended_price,\n            recommendation_type, reason, confidence::float AS confidence,\n            status\n     FROM pricing_recommendations\n     WHERE status IN ('draft','approved') AND date_from >= CURRENT_DATE\n     ORDER BY date_from\n   ) r\n  ) AS pricing_recommendations,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_gaps,\n  (SELECT COALESCE(SUM(estimated_loss),0)::float FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_estimated_loss,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=1 AND gap_start>=CURRENT_DATE) AS one_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=2 AND gap_start>=CURRENT_DATE) AS two_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=3 AND gap_start>=CURRENT_DATE) AS three_night_gaps,\n  (SELECT COUNT(*)::int FROM competitor_prices) AS competitor_count,\n  (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night)::float\n   FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_median,\n  (SELECT MIN(price_per_night)::float FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_min,\n  (SELECT MAX(price_per_night)::float FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_max,\n  (SELECT AVG(price_per_night)::float FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_avg,\n  (SELECT COUNT(*)::int FROM pricing_recommendations WHERE status='draft' AND date_from>=CURRENT_DATE) AS recommendations_count",
         "options": {}
       },
       "id": "revenue_query",
@@ -405,7 +405,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={\"ok\":true,\"action\":\"revenue\",\"gap_windows\":{{ JSON.stringify($json.gap_windows || []) }},\"competitor_prices\":{{ JSON.stringify($json.competitor_prices || []) }},\"summary\":{\"total_gaps\":{{ $json.total_gaps }},\"total_estimated_loss\":{{ $json.total_estimated_loss }},\"one_night_gaps\":{{ $json.one_night_gaps }},\"two_night_gaps\":{{ $json.two_night_gaps }},\"three_night_gaps\":{{ $json.three_night_gaps }}}}",
+        "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
           "responseCode": 200
         }
@@ -415,9 +415,207 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1300,
+        1330,
         750
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c_addcomp",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "revenue_add_competitor_price"
+            }
+          ]
+        }
+      },
+      "id": "if_add_competitor",
+      "name": "If Add Competitor",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        950
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = ($('Webhook').first().json.body) || $input.first().json || {};\nreturn [{ json: {\n  cp_source:        String(j.source        || ''),\n  cp_title:         String(j.title         || ''),\n  cp_url:           String(j.url           || ''),\n  cp_location:      String(j.location      || ''),\n  cp_max_guests:    j.max_guests    ? String(Number(j.max_guests))    : '',\n  cp_rooms:         j.rooms         ? String(Number(j.rooms))         : '',\n  cp_date_from:     String(j.date_from     || ''),\n  cp_date_to:       String(j.date_to       || ''),\n  cp_price:         String(Number(j.price_per_night) || 0),\n  cp_rating:        j.rating        ? String(Number(j.rating))        : '',\n  cp_reviews_count: j.reviews_count ? String(Number(j.reviews_count)) : '',\n  cp_notes:         String(j.notes         || '')\n} }];\n"
+      },
+      "id": "prep_competitor",
+      "name": "Prep Competitor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "{\"ok\":true,\"action\":\"revenue_add_competitor_price\",\"message\":\"competitor price added\"}",
+        "options": {
+          "responseCode": 201,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond_add_competitor",
+      "name": "Respond Add Competitor",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c_pricrec",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_recommendations"
+            }
+          ]
+        }
+      },
+      "id": "if_pricing_recs",
+      "name": "If Pricing Recs",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD')   AS date_to,\n       pr.nights, pr.current_price::float, pr.market_min::float,\n       pr.market_median::float, pr.market_avg::float, pr.market_max::float,\n       pr.recommended_price::float, pr.recommendation_type,\n       pr.reason, pr.confidence::float, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
+        "options": {}
+      },
+      "id": "pricing_recs_query",
+      "name": "Pricing Recs Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        1050
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: { ok: true, action: 'pricing_recommendations', data: rows, count: rows.length } }];"
+      },
+      "id": "format_pricing_recs",
+      "name": "Format Pricing Recs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        1050
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond_pricing_recs",
+      "name": "Respond Pricing Recs",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1500,
+        1050
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\nreturn [{ json: {\n  ok: true,\n  action: 'revenue',\n  gap_windows:           row.gap_windows           || [],\n  competitor_prices:     row.competitor_prices     || [],\n  pricing_recommendations: row.pricing_recommendations || [],\n  summary: {\n    total_gaps:           row.total_gaps           || 0,\n    total_estimated_loss: row.total_estimated_loss || 0,\n    one_night_gaps:       row.one_night_gaps       || 0,\n    two_night_gaps:       row.two_night_gaps       || 0,\n    three_night_gaps:     row.three_night_gaps     || 0,\n    competitor_count:     row.competitor_count     || 0,\n    market_min:           row.market_min    != null ? Number(row.market_min)    : null,\n    market_median:        row.market_median != null ? Number(row.market_median) : null,\n    market_avg:           row.market_avg    != null ? Number(row.market_avg)    : null,\n    market_max:           row.market_max    != null ? Number(row.market_max)    : null,\n    recommendations_count: row.recommendations_count || 0\n  }\n} }];\n"
+      },
+      "id": "format_revenue_c1",
+      "name": "Format Revenue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1130,
+        750
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\nreturn [{ json: { ok: true, action: 'revenue_add_competitor_price', id: row.id || null, message: 'competitor price added' } }];"
+      },
+      "id": "format_add_comp",
+      "name": "Format Add Competitor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO competitor_prices\n  (source, title, url, location, max_guests, rooms,\n   date_from, date_to, price_per_night, rating, reviews_count, notes)\nVALUES (\n  '{{ $json.cp_source }}',\n  '{{ $json.cp_title }}',\n  NULLIF('{{ $json.cp_url }}',''),\n  NULLIF('{{ $json.cp_location }}',''),\n  NULLIF('{{ $json.cp_max_guests }}','')::integer,\n  NULLIF('{{ $json.cp_rooms }}','')::integer,\n  '{{ $json.cp_date_from }}'::date,\n  '{{ $json.cp_date_to }}'::date,\n  {{ $json.cp_price }}::numeric,\n  NULLIF('{{ $json.cp_rating }}','')::numeric,\n  NULLIF('{{ $json.cp_reviews_count }}','')::integer,\n  NULLIF('{{ $json.cp_notes }}','')\n) RETURNING id::text AS id, source, title, price_per_night::float",
+        "options": {}
+      },
+      "id": "comp_db_insert",
+      "name": "Competitor DB Insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        900
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     }
   ],
   "connections": {
@@ -592,7 +790,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Add Competitor",
             "type": "main",
             "index": 0
           }
@@ -603,7 +801,109 @@
       "main": [
         [
           {
+            "node": "Format Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Add Competitor": {
+      "main": [
+        [
+          {
+            "node": "Prep Competitor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Pricing Recs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Pricing Recs": {
+      "main": [
+        [
+          {
+            "node": "Pricing Recs Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pricing Recs Query": {
+      "main": [
+        [
+          {
+            "node": "Format Pricing Recs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Pricing Recs": {
+      "main": [
+        [
+          {
+            "node": "Respond Pricing Recs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Revenue": {
+      "main": [
+        [
+          {
             "node": "Respond Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Add Competitor": {
+      "main": [
+        [
+          {
+            "node": "Respond Add Competitor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Competitor": {
+      "main": [
+        [
+          {
+            "node": "Competitor DB Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Competitor DB Insert": {
+      "main": [
+        [
+          {
+            "node": "Format Add Competitor",
             "type": "main",
             "index": 0
           }

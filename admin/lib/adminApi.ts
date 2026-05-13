@@ -71,19 +71,88 @@ export type CompetitorPrice = {
   collected_at: string;
 };
 
+export type PricingRecommendation = {
+  apartment_id: string;
+  apartment_name: string;
+  date_from: string;
+  date_to: string;
+  nights: number;
+  current_price: number | null;
+  market_median: number | null;
+  recommended_price: number;
+  recommendation_type: "gap_special_price" | "raise_price" | "lower_price" | "hold_price";
+  reason: string;
+  confidence: number | null;
+  status: string;
+};
+
 export type RevenueSummary = {
   total_gaps: number;
   total_estimated_loss: number;
   one_night_gaps: number;
   two_night_gaps: number;
   three_night_gaps: number;
+  competitor_count: number;
+  market_min: number | null;
+  market_median: number | null;
+  market_avg: number | null;
+  market_max: number | null;
+  recommendations_count: number;
 };
 
 export type RevenueData = {
   gap_windows: GapWindow[];
   competitor_prices: CompetitorPrice[];
+  pricing_recommendations: PricingRecommendation[];
   summary: RevenueSummary;
 };
+
+export type AddCompetitorPriceInput = {
+  source: string;
+  title: string;
+  url?: string;
+  location?: string;
+  max_guests?: number;
+  rooms?: number;
+  date_from: string;
+  date_to: string;
+  price_per_night: number;
+  rating?: number;
+  reviews_count?: number;
+  notes?: string;
+};
+
+export async function addCompetitorPrice(
+  input: AddCompetitorPriceInput,
+): Promise<{ ok: boolean; id: string; message: string }> {
+  const API_URL_VAL = process.env.ADMIN_API_URL;
+  const API_TOKEN_VAL = process.env.ADMIN_API_TOKEN;
+  if (!API_URL_VAL) throw new AdminApiError("ADMIN_API_URL is not configured");
+  if (!API_TOKEN_VAL) throw new AdminApiError("ADMIN_API_TOKEN is not configured");
+
+  let res: Response;
+  try {
+    res = await fetch(API_URL_VAL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Token": API_TOKEN_VAL,
+      },
+      body: JSON.stringify({ action: "revenue_add_competitor_price", ...input }),
+      cache: "no-store",
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Network error";
+    throw new AdminApiError(`Admin API unreachable: ${msg}`);
+  }
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok || (body && body.ok === false)) {
+    const err = body?.error ?? `HTTP ${res.status}`;
+    throw new AdminApiError(err, res.status);
+  }
+  return body as { ok: boolean; id: string; message: string };
+}
 
 export async function adminApi<A extends AdminAction>(
   action: A,
