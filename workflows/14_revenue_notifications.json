@@ -1,0 +1,264 @@
+{
+  "name": "14 — Revenue Notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtHour": 6,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "rn-trigger",
+      "name": "Daily 09:00 MSK",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, value FROM system_vars WHERE key IN ('owner_chat_id', 'revenue_notification_last_sent_at', 'revenue_notification_last_hash')",
+        "options": {}
+      },
+      "id": "rn-load-vars",
+      "name": "Load System Vars",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH rec_status AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,\n    COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,\n    COUNT(*) FILTER (WHERE status = 'exported') AS exported_count,\n    COUNT(*) FILTER (WHERE status = 'manually_applied') AS manually_applied_count,\n    COUNT(*) FILTER (WHERE status = 'apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_summary AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss\n  FROM gap_windows WHERE status = 'open'\n),\ncomp_stats AS (\n  SELECT\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active' AND cpo.observed_at < NOW() - INTERVAL '14 days'\n    ) AS stale_obs,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active' AND cpo.observed_at >= NOW() - INTERVAL '14 days'\n    ) AS fresh_obs,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night)\n      FILTER (WHERE cs.status = 'active' AND cs.similarity_score >= 80) AS market_median\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\ntop_gap AS (\n  SELECT apartment_id, gap_start, gap_end, nights,\n         COALESCE(estimated_loss, 0) AS estimated_loss\n  FROM gap_windows WHERE status = 'open'\n  ORDER BY estimated_loss DESC NULLS LAST LIMIT 1\n)\nSELECT\n  rs.draft_count, rs.approved_count, rs.exported_count,\n  rs.manually_applied_count, rs.apply_failed_count,\n  gs.total_gaps, gs.total_estimated_loss,\n  cs.stale_obs, cs.fresh_obs, cs.market_median,\n  tg.apartment_id AS top_gap_apt, tg.gap_start AS top_gap_start,\n  tg.gap_end AS top_gap_end, tg.nights AS top_gap_nights,\n  tg.estimated_loss AS top_gap_loss\nFROM rec_status rs, gap_summary gs, comp_stats cs\nLEFT JOIN top_gap tg ON TRUE",
+        "options": {}
+      },
+      "id": "rn-revenue-query",
+      "name": "Revenue Data Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        760,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst r = $input.first().json;\n\nconst safeInt = (v) => parseInt(v) || 0;\nconst safeFloat = (v) => (v != null && v !== '') ? parseFloat(v) : null;\n\n// Revenue data\nconst applyFailed   = safeInt(r.apply_failed_count);\nconst exportedCount = safeInt(r.exported_count);\nconst approvedCount = safeInt(r.approved_count);\nconst draftCount    = safeInt(r.draft_count);\nconst totalGaps     = safeInt(r.total_gaps);\nconst totalLoss     = safeFloat(r.total_estimated_loss) || 0;\nconst staleObs      = safeInt(r.stale_obs);\nconst marketMedian  = safeFloat(r.market_median);\nconst topGapApt     = r.top_gap_apt;\nconst topGapNights  = safeInt(r.top_gap_nights);\nconst topGapStart   = r.top_gap_start ? String(r.top_gap_start).slice(0, 10) : null;\nconst topGapEnd     = r.top_gap_end   ? String(r.top_gap_end).slice(0, 10)   : null;\nconst topGapLoss    = safeInt(r.top_gap_loss);\n\n// System vars from previous step\nconst sysVars = $('Load System Vars').all().reduce((acc, item) => {\n  acc[item.json.key] = item.json.value;\n  return acc;\n}, {});\n\nconst ownerChatId           = sysVars['owner_chat_id'] || '';\nconst lastSentAt            = sysVars['revenue_notification_last_sent_at'] || '';\nconst lastHash              = sysVars['revenue_notification_last_hash'] || '';\n\nconst BASE_PRICE = 5500;\n\n// Build high/medium lines\nconst highLines = [];\nconst mediumLines = [];\n\nif (applyFailed > 0)\n  highLines.push(`• ⚠️ Ошибки применения: ${applyFailed} ${applyFailed === 1 ? 'рекомендация не применена' : 'рекомендации не применены'} → проверьте audit log`);\n\nif (exportedCount > 0)\n  highLines.push(`• 📋 Готово к ручному применению: ${exportedCount} ${exportedCount === 1 ? 'цена ждёт' : 'цены ждут'} переноса в RealtyCalendar`);\n\nif (totalGaps > 0 && totalLoss > 0) {\n  let gapNote = '';\n  if (topGapApt && topGapStart) {\n    const startFmt = topGapStart.slice(5).replace('-', '.');\n    const endFmt   = topGapEnd   ? topGapEnd.slice(5).replace('-', '.')   : '?';\n    gapNote = ` (№${topGapApt}: ${topGapNights} н. ${startFmt}–${endFmt})`;\n  }\n  highLines.push(`• 🪟 Маленькие окна: ${totalGaps} ${totalGaps < 5 ? ['','окно','окна','окна','окна'][totalGaps] || 'окон' : 'окон'}, потеря ${Math.round(totalLoss).toLocaleString('ru-RU')} ₽${gapNote}`);\n}\n\nif (approvedCount > 0)\n  mediumLines.push(`• ✅ Одобрено, но не экспортировано: ${approvedCount} ${approvedCount === 1 ? 'рекомендация' : 'рекомендации'}`);\n\nif (draftCount > 0)\n  mediumLines.push(`• 📝 Ждут решения: ${draftCount} ${draftCount === 1 ? 'рекомендация' : 'рекомендации'} (одобрить или отклонить)`);\n\nif (staleObs > 0)\n  mediumLines.push(`• 📊 Данные конкурентов устарели: ${staleObs} ${staleObs === 1 ? 'наблюдение' : 'наблюдений'} старше 14 дней`);\n\nif (marketMedian != null && marketMedian > BASE_PRICE * 1.1) {\n  const diff = Math.round(marketMedian - BASE_PRICE);\n  mediumLines.push(`• 📈 Рынок выше базы: медиана ${Math.round(marketMedian).toLocaleString('ru-RU')} ₽/сут (+${diff.toLocaleString('ru-RU')} ₽)`);\n}\n\nconst hasHigh   = highLines.length > 0;\nconst hasMedium = mediumLines.length > 0;\nconst hasActions = hasHigh || hasMedium;\n\n// Build message\nlet text = '';\nif (hasActions) {\n  text += '📊 *Акваторинг Revenue: что сделать сегодня*\\n\\n';\n  if (hasHigh) {\n    text += '🔴 *Срочно:*\\n' + highLines.join('\\n') + '\\n\\n';\n  }\n  if (hasMedium) {\n    text += '🟡 *Важно:*\\n' + mediumLines.join('\\n') + '\\n\\n';\n  }\n  text += '👉 https://admin.aquatoring.ru/revenue';\n}\n\n// Compute simple hash of actions (for anti-spam)\nconst actionKey = [...highLines, ...mediumLines].join('|');\nconst hashStr = Array.from(actionKey).reduce((h, c) => {\n  return ((h << 5) - h + c.charCodeAt(0)) | 0;\n}, 0).toString(16);\n\n// Anti-spam check\nconst nowMs = Date.now();\nconst lastSentMs = lastSentAt ? new Date(lastSentAt).getTime() : 0;\nconst sameHash = hashStr === lastHash;\nconst within24h = (nowMs - lastSentMs) < 24 * 3600 * 1000;\nconst shouldSkip = !hasActions || (sameHash && within24h);\n\nreturn [{\n  json: {\n    owner_chat_id: ownerChatId,\n    message_text: text,\n    message_hash: hashStr,\n    has_actions: hasActions,\n    has_high: hasHigh,\n    has_medium: hasMedium,\n    should_skip: shouldSkip,\n    skip_reason: shouldSkip\n      ? (!hasActions ? 'no_actions' : `same_hash_within_24h (hash=${hashStr}, sent=${lastSentAt})`)\n      : 'will_send',\n    last_sent_at: lastSentAt,\n    last_hash: lastHash,\n    // preview for logs\n    high_count: highLines.length,\n    medium_count: mediumLines.length\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "rn-build",
+      "name": "Build Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "rn-skip-check",
+              "leftValue": "={{ $json.should_skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "rn-if-send",
+      "name": "If Should Send",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.owner_chat_id }}",
+        "text": "={{ $json.message_text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "rn-send-telegram",
+      "name": "Send Revenue Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1600,
+        200
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot",
+          "name": "Owner Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nINSERT INTO system_vars (key, value, description, updated_at)\nVALUES\n  ('revenue_notification_last_sent_at', '{{ $now.toISO() }}', 'Last revenue notification sent at', NOW()),\n  ('revenue_notification_last_hash', '{{ $json.message_hash }}', 'Hash of last revenue notification content', NOW())\nON CONFLICT (key) DO UPDATE SET\n  value = EXCLUDED.value,\n  updated_at = NOW()\n",
+        "options": {}
+      },
+      "id": "rn-save-state",
+      "name": "Save Anti-Spam State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1880,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "rn-silent-exit",
+      "name": "Silent Exit",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 09:00 MSK": {
+      "main": [
+        [
+          {
+            "node": "Load System Vars",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load System Vars": {
+      "main": [
+        [
+          {
+            "node": "Revenue Data Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revenue Data Query": {
+      "main": [
+        [
+          {
+            "node": "Build Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification": {
+      "main": [
+        [
+          {
+            "node": "If Should Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Should Send": {
+      "main": [
+        [
+          {
+            "node": "Send Revenue Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Silent Exit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Revenue Notification": {
+      "main": [
+        [
+          {
+            "node": "Save Anti-Spam State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": false,
+    "errorWorkflow": "07_error_handler"
+  },
+  "versionId": "c32-v1-initial",
+  "id": "14",
+  "tags": [
+    {
+      "id": "revenue",
+      "name": "revenue"
+    },
+    {
+      "id": "notifications",
+      "name": "notifications"
+    }
+  ]
+}
