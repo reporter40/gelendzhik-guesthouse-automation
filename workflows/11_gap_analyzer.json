@@ -1,0 +1,124 @@
+{
+  "id": "11-gap-analyzer-c0",
+  "name": "11 — Gap Analyzer (C0)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Daily Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.id AS booking_id, b.apartment_id, a.name AS apartment_name,\n       a.base_price,\n       to_char(b.checkin_at, 'YYYY-MM-DD') AS checkin_at,\n       to_char(b.checkout_at, 'YYYY-MM-DD') AS checkout_at\nFROM bookings b\nJOIN apartments a ON a.id = b.apartment_id\nWHERE b.status IN ('confirmed', 'booking')\n  AND b.checkout_at >= CURRENT_DATE\n  AND b.checkin_at <= CURRENT_DATE + INTERVAL '90 days'\nORDER BY b.apartment_id, b.checkin_at",
+        "options": {}
+      },
+      "id": "load-bookings",
+      "name": "Load Bookings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": {
+        "postgres": { "id": "gelendzhik_db", "name": "Gelendzhik DB" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const threshold = 3;\nconst allItems = $input.all();\n\n// Group by apartment\nconst byApt = {};\nfor (const item of allItems) {\n  const apt = item.json.apartment_id;\n  if (!byApt[apt]) {\n    byApt[apt] = { name: item.json.apartment_name, base_price: item.json.base_price, bookings: [] };\n  }\n  byApt[apt].bookings.push({\n    id: item.json.booking_id,\n    checkin: item.json.checkin_at,\n    checkout: item.json.checkout_at\n  });\n}\n\nconst gaps = [];\nconst today = new Date();\ntoday.setHours(0,0,0,0);\n\nfor (const [aptId, data] of Object.entries(byApt)) {\n  const sorted = data.bookings.sort((a, b) => new Date(a.checkin) - new Date(b.checkin));\n  for (let i = 0; i < sorted.length - 1; i++) {\n    const prev = sorted[i];\n    const next = sorted[i + 1];\n    const gapStart = new Date(prev.checkout);\n    const gapEnd   = new Date(next.checkin);\n    const nights = Math.round((gapEnd - gapStart) / 86400000);\n    if (nights >= 1 && nights <= threshold && gapStart >= today) {\n      const bp = data.base_price ? Number(data.base_price) : null;\n      const rec = nights === 1\n        ? 'Продать как короткое окно / спеццена / разрешить 1 ночь'\n        : nights === 2\n          ? 'Спеццена на 2 ночи / подсветить владельцу'\n          : 'Можно продать как короткий заезд или держать min stay';\n      gaps.push({\n        apartment_id: aptId,\n        gap_start: gapStart.toISOString().split('T')[0],\n        gap_end:   gapEnd.toISOString().split('T')[0],\n        nights,\n        previous_booking_id: prev.id,\n        next_booking_id:     next.id,\n        estimated_loss: bp ? nights * bp : null,\n        recommendation: rec\n      });\n    }\n  }\n}\n\nif (gaps.length === 0) {\n  return [{ json: { _no_gaps: true, message: 'No small gap windows found' } }];\n}\nreturn gaps.map(g => ({ json: g }));\n"
+      },
+      "id": "find-gaps",
+      "name": "Find Gap Windows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-has-apt",
+              "leftValue": "={{ $json.apartment_id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-gaps-check",
+      "name": "Has Gaps?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gap_windows\n  (apartment_id, gap_start, gap_end, nights, previous_booking_id, next_booking_id, estimated_loss, recommendation, status)\nVALUES\n  ($1, $2::date, $3::date, $4, $5, $6, $7, $8, 'open')\nON CONFLICT (apartment_id, gap_start)\nDO UPDATE SET\n  gap_end             = EXCLUDED.gap_end,\n  nights              = EXCLUDED.nights,\n  previous_booking_id = EXCLUDED.previous_booking_id,\n  next_booking_id     = EXCLUDED.next_booking_id,\n  estimated_loss      = EXCLUDED.estimated_loss,\n  recommendation      = EXCLUDED.recommendation,\n  updated_at          = NOW()\nWHERE gap_windows.status = 'open'\nRETURNING id, apartment_id, gap_start, nights, estimated_loss",
+        "additionalFields": {
+          "queryBatching": "independently",
+          "queryReplacement": "={{ [$json.apartment_id, $json.gap_start, $json.gap_end, $json.nights, $json.previous_booking_id, $json.next_booking_id, $json.estimated_loss, $json.recommendation] }}"
+        },
+        "options": {}
+      },
+      "id": "upsert-gaps",
+      "name": "Upsert Gap Windows",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 200],
+      "credentials": {
+        "postgres": { "id": "gelendzhik_db", "name": "Gelendzhik DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM gap_windows WHERE status = 'open' AND gap_start < CURRENT_DATE",
+        "options": {}
+      },
+      "id": "cleanup-old",
+      "name": "Cleanup Past Gaps",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 400],
+      "credentials": {
+        "postgres": { "id": "gelendzhik_db", "name": "Gelendzhik DB" }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Check": {
+      "main": [[{ "node": "Load Bookings", "type": "main", "index": 0 }]]
+    },
+    "Load Bookings": {
+      "main": [[{ "node": "Find Gap Windows", "type": "main", "index": 0 }]]
+    },
+    "Find Gap Windows": {
+      "main": [[{ "node": "Has Gaps?", "type": "main", "index": 0 }]]
+    },
+    "Has Gaps?": {
+      "main": [
+        [{ "node": "Upsert Gap Windows", "type": "main", "index": 0 }],
+        [{ "node": "Cleanup Past Gaps",  "type": "main", "index": 0 }]
+      ]
+    },
+    "Upsert Gap Windows": {
+      "main": [[{ "node": "Cleanup Past Gaps", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "11-gap-analyzer-v1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

@@ -1,0 +1,622 @@
+{
+  "id": "82575887-be9e-4267-8e8e-2d760de2a986",
+  "name": "10 — Admin API",
+  "nodes": [
+    {
+      "id": "wh01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "adminapi1234/admin",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "adminapi1234"
+    },
+    {
+      "id": "pg01",
+      "name": "Load Admin Token",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_db"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM system_vars WHERE key='admin_api_token' LIMIT 1;",
+        "options": {}
+      }
+    },
+    {
+      "id": "code01",
+      "name": "Validate Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = ['health', 'bookings', 'templates'];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
+      }
+    },
+    {
+      "id": "if01",
+      "name": "If Authorized",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.authorized }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "resp401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\":false,\"error\":\"unauthorized\"}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "if02",
+      "name": "If Health",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        350
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c2",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "health"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "if03",
+      "name": "If Bookings",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c3",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "bookings"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pg02",
+      "name": "Health Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        250
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_db"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT COUNT(*) FROM bookings) AS bookings_count, (SELECT COUNT(*) FROM bookings WHERE source='realtycalendar-ical') AS rc_bookings_count, (SELECT MAX(updated_at) FROM bookings WHERE source='realtycalendar-ical') AS latest_rc_sync, (SELECT COUNT(*) FROM message_templates) AS templates_count, (SELECT COUNT(*) FROM bookings WHERE guest_chat_id IS NOT NULL) AS guest_connected_count;",
+        "options": {}
+      }
+    },
+    {
+      "id": "pg03",
+      "name": "Bookings Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_db"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, apartment_id, apartment_name, checkin_at::text, checkout_at::text, nights, source, status, COALESCE(guest_name,'') AS guest_name, COALESCE(guest_username,'') AS guest_username, (guest_chat_id IS NOT NULL) AS guest_connected, journey_sent, 'https://t.me/GuestGelen_bot?start='||id AS deep_link, updated_at FROM bookings ORDER BY checkin_at ASC, apartment_id ASC;",
+        "options": {}
+      }
+    },
+    {
+      "id": "pg04",
+      "name": "Templates Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        590
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_db"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, channel, lang, body, active, updated_at FROM message_templates ORDER BY channel, key;",
+        "options": {}
+      }
+    },
+    {
+      "id": "resp400",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        720
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\":false,\"error\":\"unknown_action\"}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "resp-health",
+      "name": "Respond Health",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        250
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'health', data: { workflows_expected_active: ['01','02','03','09','10'], bookings_count: parseInt($json.bookings_count), rc_bookings_count: parseInt($json.rc_bookings_count), latest_rc_sync: $json.latest_rc_sync, templates_count: parseInt($json.templates_count), guest_connected_count: parseInt($json.guest_connected_count) } }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "code02",
+      "name": "Format Bookings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: { _body: JSON.stringify({ ok: true, action: 'bookings', count: rows.length, data: rows }) } }];"
+      }
+    },
+    {
+      "id": "resp-bookings",
+      "name": "Respond Bookings",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json._body }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "code03",
+      "name": "Format Templates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        590
+      ],
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: { _body: JSON.stringify({ ok: true, action: 'templates', count: rows.length, data: rows }) } }];"
+      }
+    },
+    {
+      "id": "resp-templates",
+      "name": "Respond Templates",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        590
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json._body }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if04",
+      "name": "If Templates",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        650
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c4",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "templates"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "crev",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "revenue"
+            }
+          ]
+        }
+      },
+      "id": "if_revenue",
+      "name": "If Revenue",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT json_agg(g ORDER BY g.estimated_loss DESC NULLS LAST, g.gap_start)\n   FROM (\n     SELECT gw.apartment_id, a.name AS apartment_name,\n            to_char(gw.gap_start,'YYYY-MM-DD') AS gap_start,\n            to_char(gw.gap_end,'YYYY-MM-DD')   AS gap_end,\n            gw.nights, gw.estimated_loss::float AS estimated_loss,\n            gw.recommendation, gw.status,\n            to_char(gw.detected_at,'YYYY-MM-DD') AS detected_at\n     FROM gap_windows gw\n     JOIN apartments a ON a.id = gw.apartment_id\n     WHERE gw.status = 'open' AND gw.gap_start >= CURRENT_DATE\n   ) g\n  ) AS gap_windows,\n  (SELECT json_agg(cp ORDER BY cp.date_from)\n   FROM (\n     SELECT source, title, url, location,\n            to_char(date_from,'YYYY-MM-DD') AS date_from,\n            to_char(date_to,'YYYY-MM-DD')   AS date_to,\n            price_per_night::float AS price_per_night,\n            rating::float AS rating, reviews_count, notes,\n            to_char(collected_at,'YYYY-MM-DD') AS collected_at\n     FROM competitor_prices\n     ORDER BY date_from\n   ) cp\n  ) AS competitor_prices,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_gaps,\n  (SELECT COALESCE(SUM(estimated_loss),0)::float FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_estimated_loss,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=1 AND gap_start>=CURRENT_DATE) AS one_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=2 AND gap_start>=CURRENT_DATE) AS two_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=3 AND gap_start>=CURRENT_DATE) AS three_night_gaps",
+        "options": {}
+      },
+      "id": "revenue_query",
+      "name": "Revenue Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        750
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\":true,\"action\":\"revenue\",\"gap_windows\":{{ JSON.stringify($json.gap_windows || []) }},\"competitor_prices\":{{ JSON.stringify($json.competitor_prices || []) }},\"summary\":{\"total_gaps\":{{ $json.total_gaps }},\"total_estimated_loss\":{{ $json.total_estimated_loss }},\"one_night_gaps\":{{ $json.one_night_gaps }},\"two_night_gaps\":{{ $json.two_night_gaps }},\"three_night_gaps\":{{ $json.three_night_gaps }}}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond_revenue",
+      "name": "Respond Revenue",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        750
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Admin Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Admin Token": {
+      "main": [
+        [
+          {
+            "node": "Validate Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Token": {
+      "main": [
+        [
+          {
+            "node": "If Authorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Authorized": {
+      "main": [
+        [
+          {
+            "node": "If Health",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Health": {
+      "main": [
+        [
+          {
+            "node": "Health Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Bookings": {
+      "main": [
+        [
+          {
+            "node": "Bookings Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Query": {
+      "main": [
+        [
+          {
+            "node": "Respond Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bookings Query": {
+      "main": [
+        [
+          {
+            "node": "Format Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Bookings": {
+      "main": [
+        [
+          {
+            "node": "Respond Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Templates Query": {
+      "main": [
+        [
+          {
+            "node": "Format Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Templates": {
+      "main": [
+        [
+          {
+            "node": "Respond Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Templates": {
+      "main": [
+        [
+          {
+            "node": "Templates Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Revenue": {
+      "main": [
+        [
+          {
+            "node": "Revenue Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revenue Query": {
+      "main": [
+        [
+          {
+            "node": "Respond Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-05-10T00:00:00.000Z",
+  "versionId": "a1-admin-api-v2"
+}
