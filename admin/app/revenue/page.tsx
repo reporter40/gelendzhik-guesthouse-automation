@@ -3,22 +3,25 @@ import {
   adminApi,
   fetchAuditLog,
   fetchMarketHistory,
+  fetchRevenueDashboard,
   AdminApiError,
   RevenueData,
   CompetitorPriceObservation,
   AuditLogEntry,
   MarketHistoryData,
+  RevenueDashboardData,
 } from "@/lib/adminApi";
 import CompetitorForm from "./CompetitorForm";
 import { ApprovalsPanel } from "./ApprovalsPanel";
 import { MarketHistoryPanel } from "./MarketHistoryPanel";
 import { ManualObservationForm } from "./ManualObservationForm";
+import { TodayActionsPanel } from "./TodayActionsPanel";
+import { RevenueKpiCards } from "./RevenueKpiCards";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
   return n.toLocaleString("ru-RU");
 }
-
 
 export default async function RevenuePage() {
   await requireAuth();
@@ -27,23 +30,25 @@ export default async function RevenuePage() {
   let error: string | null = null;
   let auditLog: AuditLogEntry[] = [];
   let marketHistory: MarketHistoryData | null = null;
+  let dashboard: RevenueDashboardData | null = null;
 
   try {
-    [data, auditLog, marketHistory] = await Promise.all([
+    [data, auditLog, marketHistory, dashboard] = await Promise.all([
       adminApi("revenue"),
       fetchAuditLog().catch(() => []),
       fetchMarketHistory().catch(() => null),
+      fetchRevenueDashboard().catch(() => null),
     ]);
   } catch (e) {
     error = e instanceof AdminApiError ? e.message : "Ошибка загрузки данных";
   }
 
-  const summary      = data?.summary;
-  const gaps         = data?.gap_windows             ?? [];
-  const comps        = data?.competitor_prices       ?? [];
-  const recs         = data?.pricing_recommendations ?? [];
-  const sources      = data?.latest_observations     ?? [];
-  const competitorSources = data?.competitor_sources ?? [];
+  const summary           = data?.summary;
+  const gaps              = data?.gap_windows             ?? [];
+  const comps             = data?.competitor_prices       ?? [];
+  const recs              = data?.pricing_recommendations ?? [];
+  const sources           = data?.latest_observations     ?? [];
+  const competitorSources = data?.competitor_sources      ?? [];
 
   return (
     <div className="space-y-8">
@@ -55,30 +60,23 @@ export default async function RevenuePage() {
         </div>
       )}
 
-      {/* ── Summary cards ── */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <SCard label="Маленьких окон"    value={String(summary.total_gaps)}            accent />
-          <SCard label="Потери ₽"          value={fmt(summary.total_estimated_loss)}      />
-          <SCard label="Конкурентов"        value={String(summary.active_competitors_count ?? summary.competitor_count)} />
-          <SCard label="Медиана рынка ₽"   value={fmt(summary.latest_market_median_from_sources ?? summary.market_median)} />
-          <SCard label="Рекомендации"      value={String(summary.recommendations_count)} accent={recs.length > 0} />
-          <SCard label="1+2+3 ночи"
-            value={`${summary.one_night_gaps}+${summary.two_night_gaps}+${summary.three_night_gaps}`} />
-        </div>
-      )}
+      {/* ── 1. TODAY ACTIONS ── */}
+      <TodayActionsPanel data={dashboard} />
 
-      {/* ── Market summary (from competitor_sources) ── */}
+      {/* ── 2. KPI cards ── */}
+      <RevenueKpiCards dashboard={dashboard?.summary} legacy={summary} />
+
+      {/* ── 3. Market summary (from competitor_sources) ── */}
       {summary && (summary.latest_market_min_from_sources || summary.market_min) && (
-        <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4">
+        <div id="market" className="rounded-lg border border-indigo-100 bg-indigo-50 p-4 scroll-mt-4">
           <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider mb-2">
             Рыночные цены прямых конкурентов
           </p>
           <div className="flex flex-wrap gap-6 text-sm">
-            <Stat label="Минимум"  value={fmt(summary.latest_market_min_from_sources ?? summary.market_min, "нет данных")} />
+            <Stat label="Минимум"  value={fmt(summary.latest_market_min_from_sources    ?? summary.market_min, "нет данных")} />
             <Stat label="Медиана"  value={fmt(summary.latest_market_median_from_sources ?? summary.market_median, "нет данных")} />
-            <Stat label="Среднее"  value={fmt(summary.latest_market_avg_from_sources ?? summary.market_avg, "нет данных")} />
-            <Stat label="Максимум" value={fmt(summary.latest_market_max_from_sources ?? summary.market_max, "нет данных")} />
+            <Stat label="Среднее"  value={fmt(summary.latest_market_avg_from_sources    ?? summary.market_avg, "нет данных")} />
+            <Stat label="Максимум" value={fmt(summary.latest_market_max_from_sources    ?? summary.market_max, "нет данных")} />
           </div>
           {summary.excluded_competitors_count != null && (
             <p className="text-xs text-indigo-400 mt-2">
@@ -88,57 +86,18 @@ export default async function RevenuePage() {
         </div>
       )}
 
-      {/* ── Критерии отбора ── */}
-      <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Критерии отбора конкурентов</h2>
-        <SelectionCriteria />
-      </section>
-
-      {/* ── История рынка (C3-lite) ── */}
-      <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">История рынка</h2>
-        {marketHistory ? (
-          <MarketHistoryPanel data={marketHistory} />
-        ) : (
-          <p className="text-sm text-gray-500">Загрузка истории рынка…</p>
-        )}
-      </section>
-
-      {/* ── Прямые конкуренты (C1.5) ── */}
-      <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Прямые конкуренты — последние наблюдения</h2>
-        {sources.length > 0 ? (
-          <ObservationsTable observations={sources} />
-        ) : (
-          <p className="text-sm text-gray-500">Данных наблюдений нет.</p>
-        )}
-
-        {/* Manual observation form (C3-lite) */}
-        <div className="mt-4">
-          <ManualObservationForm sources={competitorSources} />
-        </div>
-
-        {/* Future actions */}
-        <div className="mt-3 flex gap-2">
-          <button disabled className="px-3 py-1.5 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed">
-            Авто-проверка цены (C3 full)
-          </button>
-        </div>
-      </section>
-
-      {/* ── Pricing Recommendations + Audit Log (C2.0) ── */}
-      <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Ценовые рекомендации</h2>
-        <ApprovalsPanel recs={recs} auditLog={auditLog} />
-      </section>
-
-      {/* ── Gap Windows ── */}
-      <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">
+      {/* ── 4. Gap Windows ── */}
+      <section id="gaps" className="scroll-mt-4">
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">
           Маленькие окна между бронями
         </h2>
+        <p className="text-sm text-gray-500 mb-3">
+          Периоды 1–3 ночи, которые сложно продать по полной цене — стоит предложить скидку
+        </p>
         {gaps.length === 0 ? (
-          <p className="text-sm text-gray-500">Маленьких окон не найдено.</p>
+          <p className="text-sm text-gray-400 bg-gray-50 rounded-lg border border-gray-200 p-4">
+            Маленьких окон сейчас не найдено. Это хорошо — значит бронирования стоят плотно.
+          </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-gray-200">
             <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -170,7 +129,121 @@ export default async function RevenuePage() {
         )}
       </section>
 
-      {/* ── Competitor Prices (manual form) ── */}
+      {/* ── 5. Pricing Recommendations + Approvals ── */}
+      <section id="recommendations" className="scroll-mt-4">
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">Ценовые рекомендации</h2>
+        <p className="text-sm text-gray-500 mb-3">
+          Одобрите, отклоните или экспортируйте каждую рекомендацию
+        </p>
+        {recs.length === 0 ? (
+          <p className="text-sm text-gray-400 bg-gray-50 rounded-lg border border-gray-200 p-4">
+            Рекомендаций пока нет. Запустите пересчёт после обновления данных рынка.
+          </p>
+        ) : (
+          <ApprovalsPanel recs={recs} auditLog={auditLog} />
+        )}
+      </section>
+
+      {/* ── 6. Audit log anchor ── */}
+      <section id="audit-log" className="scroll-mt-4">
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">
+          <span id="manual-export" className="scroll-mt-4">Экспорт и аудит действий</span>
+        </h2>
+        <p className="text-sm text-gray-500 mb-3">
+          История одобрений, экспортов и ошибок применения
+        </p>
+        {auditLog.length === 0 ? (
+          <p className="text-sm text-gray-400 bg-gray-50 rounded-lg border border-gray-200 p-4">
+            Лог пуст — действий ещё не было.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  {["Дата", "Действие", "Статус", "Объект", "Период", "Цена", "Актор"].map((h) => (
+                    <th key={h} className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {auditLog.map((entry) => (
+                  <tr key={entry.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">
+                      {new Date(entry.created_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${
+                        entry.action.includes("fail") ? "bg-red-100 text-red-700" :
+                        entry.action.includes("applied") ? "bg-green-100 text-green-700" :
+                        entry.action.includes("export") ? "bg-orange-100 text-orange-700" :
+                        entry.action.includes("approv") ? "bg-indigo-100 text-indigo-700" :
+                        "bg-gray-100 text-gray-600"
+                      }`}>{entry.action}</span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 text-xs">
+                      {entry.previous_status && entry.new_status
+                        ? `${entry.previous_status} → ${entry.new_status}`
+                        : entry.new_status ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-gray-700">{entry.apartment_id ? `№${entry.apartment_id}` : "—"}</td>
+                    <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-xs">
+                      {entry.date_from && entry.date_to ? `${entry.date_from} — ${entry.date_to}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-700">
+                      {entry.new_price ? `${fmt(entry.new_price)} ₽` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-gray-400 text-xs">{entry.actor ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── 7. Competitors ── */}
+      <section id="competitors" className="scroll-mt-4">
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">Прямые конкуренты</h2>
+        <p className="text-sm text-gray-500 mb-3">
+          Последние наблюдения за ценами. Устаревшие (&gt;14 дней) отмечены ⚠️
+        </p>
+        {sources.length > 0 ? (
+          <ObservationsTable observations={sources} />
+        ) : (
+          <p className="text-sm text-gray-400 bg-gray-50 rounded-lg border border-gray-200 p-4">
+            Данных наблюдений нет. Добавьте первое наблюдение ниже.
+          </p>
+        )}
+
+        <div className="mt-4">
+          <ManualObservationForm sources={competitorSources} />
+        </div>
+
+        <div className="mt-3 flex gap-2">
+          <button disabled className="px-3 py-1.5 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed">
+            Авто-проверка цены (C3 full)
+          </button>
+        </div>
+      </section>
+
+      {/* ── 8. История рынка ── */}
+      <section id="market-history" className="scroll-mt-4">
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">История рынка</h2>
+        {marketHistory ? (
+          <MarketHistoryPanel data={marketHistory} />
+        ) : (
+          <p className="text-sm text-gray-500">Данных истории рынка нет.</p>
+        )}
+      </section>
+
+      {/* ── 9. Критерии отбора ── */}
+      <section>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">Критерии отбора конкурентов</h2>
+        <SelectionCriteria />
+      </section>
+
+      {/* ── 10. Добавить вручную (старый CompetitorForm) ── */}
       <section>
         <h2 className="text-lg font-semibold text-gray-800 mb-3">Добавить цену конкурента вручную</h2>
         <CompetitorForm />
@@ -244,7 +317,7 @@ function ObservationsTable({ observations }: { observations: CompetitorPriceObse
                   {o.stay_date_from} — {o.stay_date_to}
                 </td>
                 <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                  {o.price_per_night ? fmt(o.price_per_night) : "—"}
+                  {o.price_per_night ? o.price_per_night.toLocaleString("ru-RU") : "—"}
                 </td>
                 <td className="px-4 py-3 text-center text-gray-500">
                   {o.confidence != null ? `${Math.round(o.confidence * 100)}%` : "—"}
@@ -295,16 +368,6 @@ function SelectionCriteria() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-
-function SCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-4 ${accent ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white"}`}>
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-2xl font-bold ${accent ? "text-indigo-700" : "text-gray-900"}`}>{value}</p>
     </div>
   );
 }

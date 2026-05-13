@@ -381,6 +381,81 @@ export async function addCompetitorObservation(
   return body;
 }
 
+// ── Revenue Dashboard (C3.1) ─────────────────────────────────────────────────
+
+export type TodayActionPriority = "high" | "medium" | "low";
+export type TodayActionType = "gap" | "approve" | "export" | "market" | "failed" | "info";
+
+export type TodayAction = {
+  id: string;
+  priority: TodayActionPriority;
+  type: TodayActionType;
+  title: string;
+  description: string;
+  amount: number | null;
+  cta_label: string;
+  target: string;
+};
+
+export type RevenueDashboardSummary = {
+  total_gaps: number;
+  total_estimated_loss: number;
+  active_competitors: number;
+  market_median: number | null;
+  draft_recommendations: number;
+  approved_recommendations: number;
+  exported_recommendations: number;
+  manually_applied_recommendations: number;
+  apply_failed_recommendations: number;
+  stale_observations: number;
+  fresh_observations: number;
+};
+
+export type RevenueDashboardTopGap = {
+  apartment_id: string;
+  gap_start: string;
+  gap_end: string;
+  nights: number;
+  estimated_loss: number;
+  recommendation: string;
+};
+
+export type RevenueDashboardTopRec = {
+  id: string;
+  apartment_id: string;
+  date_from: string;
+  date_to: string;
+  nights: number;
+  recommended_price: number;
+  current_price: number | null;
+  market_median: number | null;
+  recommendation_type: string;
+  reason: string;
+  status: string;
+  confidence: number | null;
+};
+
+export type RevenueDashboardData = {
+  ok: boolean;
+  summary: RevenueDashboardSummary;
+  today_actions: TodayAction[];
+  top_gaps: RevenueDashboardTopGap[];
+  top_recommendations: RevenueDashboardTopRec[];
+  latest_audit: AuditLogEntry[];
+};
+
+export async function fetchRevenueDashboard(): Promise<RevenueDashboardData> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "revenue_dashboard" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as RevenueDashboardData;
+}
+
 export async function addCompetitorPrice(
   input: AddCompetitorPriceInput,
 ): Promise<{ ok: boolean; id: string; message: string }> {

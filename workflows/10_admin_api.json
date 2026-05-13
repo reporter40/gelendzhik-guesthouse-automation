@@ -1747,6 +1747,89 @@
           "responseCode": 200
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "rd-cond",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "revenue_dashboard",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-revenue-dashboard",
+      "name": "If Revenue Dashboard",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        3400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH rec_status AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,\n    COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,\n    COUNT(*) FILTER (WHERE status = 'exported') AS exported_count,\n    COUNT(*) FILTER (WHERE status = 'manually_applied') AS manually_applied_count,\n    COUNT(*) FILTER (WHERE status = 'apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_summary AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_stats AS (\n  SELECT\n    COUNT(*) FILTER (WHERE cs.status = 'active') AS active_competitors,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at < NOW() - INTERVAL '14 days'\n    ) AS stale_obs,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at >= NOW() - INTERVAL '14 days'\n    ) AS fresh_obs,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night)\n      FILTER (WHERE cs.status = 'active' AND cs.similarity_score >= 80) AS market_median\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\ntop_gaps AS (\n  SELECT COALESCE(json_agg(row_to_json(g) ORDER BY (g.estimated_loss) DESC NULLS LAST), '[]'::json) AS data\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights,\n           COALESCE(estimated_loss, 0) AS estimated_loss, recommendation\n    FROM gap_windows\n    WHERE status = 'open'\n    ORDER BY estimated_loss DESC NULLS LAST\n    LIMIT 3\n  ) g\n),\ntop_recs AS (\n  SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) AS data\n  FROM (\n    SELECT id, apartment_id, date_from, date_to, nights,\n           recommended_price, current_price, market_median,\n           recommendation_type, reason, status, confidence\n    FROM pricing_recommendations\n    WHERE status IN ('draft', 'approved', 'exported', 'apply_failed')\n    ORDER BY\n      CASE status\n        WHEN 'apply_failed' THEN 1\n        WHEN 'exported' THEN 2\n        WHEN 'approved' THEN 3\n        WHEN 'draft' THEN 4\n        ELSE 5\n      END,\n      created_at DESC\n    LIMIT 5\n  ) r\n),\nlatest_audit AS (\n  SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) AS data\n  FROM (\n    SELECT id, action, previous_status, new_status,\n           apartment_id, date_from, date_to, old_price, new_price,\n           reason, actor, created_at\n    FROM pricing_action_audit_log\n    ORDER BY created_at DESC\n    LIMIT 5\n  ) a\n)\nSELECT\n  rs.draft_count, rs.approved_count, rs.exported_count,\n  rs.manually_applied_count, rs.apply_failed_count,\n  gs.total_gaps, gs.total_estimated_loss,\n  cs.active_competitors, cs.stale_obs, cs.fresh_obs, cs.market_median,\n  tg.data AS top_gaps,\n  tr.data AS top_recs,\n  la.data AS latest_audit\nFROM rec_status rs, gap_summary gs, comp_stats cs,\n     top_gaps tg, top_recs tr, latest_audit la",
+        "options": {}
+      },
+      "id": "revenue-dashboard-query",
+      "name": "Revenue Dashboard Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        3400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst r = $input.first().json;\n\nconst safeInt = (v) => parseInt(v) || 0;\nconst safeFloat = (v) => v != null ? parseFloat(v) : null;\nconst safeArr = (v) => {\n  if (!v) return [];\n  if (typeof v === 'string') try { return JSON.parse(v) || []; } catch { return []; }\n  return Array.isArray(v) ? v : [];\n};\n\nconst draftCount      = safeInt(r.draft_count);\nconst approvedCount   = safeInt(r.approved_count);\nconst exportedCount   = safeInt(r.exported_count);\nconst manualApplied   = safeInt(r.manually_applied_count);\nconst applyFailed     = safeInt(r.apply_failed_count);\nconst totalGaps       = safeInt(r.total_gaps);\nconst totalLoss       = safeFloat(r.total_estimated_loss) || 0;\nconst activeComp      = safeInt(r.active_competitors);\nconst staleObs        = safeInt(r.stale_obs);\nconst freshObs        = safeInt(r.fresh_obs);\nconst marketMedian    = safeFloat(r.market_median);\nconst topGaps         = safeArr(r.top_gaps);\nconst topRecs         = safeArr(r.top_recs);\nconst latestAudit     = safeArr(r.latest_audit);\n\n// Base price for comparison (owner's typical price)\nconst BASE_PRICE = 5500;\n\n// Build today_actions\nconst actions = [];\n\n// HIGH: apply_failed\nif (applyFailed > 0) {\n  actions.push({\n    id: 'apply_failed',\n    priority: 'high',\n    type: 'failed',\n    title: 'Есть ошибки применения',\n    description: `${applyFailed} ${applyFailed === 1 ? 'рекомендация не была применена' : 'рекомендации не были применены'}. Проверьте, что пошло не так.`,\n    amount: null,\n    cta_label: 'Открыть audit log',\n    target: '#audit-log'\n  });\n}\n\n// HIGH: exported waiting for manual apply\nif (exportedCount > 0) {\n  actions.push({\n    id: 'exported',\n    priority: 'high',\n    type: 'export',\n    title: 'Применить вручную в RealtyCalendar',\n    description: `${exportedCount} ${exportedCount === 1 ? 'цена подготовлена' : 'цены подготовлены'} для ручного переноса в RealtyCalendar. Нужно применить и отметить.`,\n    amount: null,\n    cta_label: 'Открыть экспорт',\n    target: '#manual-export'\n  });\n}\n\n// HIGH: gap windows with estimated loss\nif (totalGaps > 0 && totalLoss > 0) {\n  const topGap = topGaps[0];\n  const gapDesc = topGap\n    ? `Самое большое: №${topGap.apartment_id}, ${topGap.nights} ${topGap.nights === 1 ? 'ночь' : topGap.nights < 5 ? 'ночи' : 'ночей'} (${topGap.gap_start} — ${topGap.gap_end}).`\n    : '';\n  actions.push({\n    id: 'gaps',\n    priority: 'high',\n    type: 'gap',\n    title: `Маленькие окна: ${totalGaps} ${totalGaps === 1 ? 'окно' : totalGaps < 5 ? 'окна' : 'окон'}`,\n    description: `Потенциальная потеря: ${Math.round(totalLoss).toLocaleString('ru-RU')} ₽. ${gapDesc}`,\n    amount: Math.round(totalLoss),\n    cta_label: 'Смотреть окна',\n    target: '#gaps'\n  });\n}\n\n// MEDIUM: approved but not exported yet\nif (approvedCount > 0) {\n  actions.push({\n    id: 'approved',\n    priority: 'medium',\n    type: 'export',\n    title: 'Одобренная цена ждёт экспорта',\n    description: `${approvedCount} ${approvedCount === 1 ? 'рекомендация одобрена' : 'рекомендации одобрены'}, но ещё не подготовлена для переноса в RealtyCalendar.`,\n    amount: null,\n    cta_label: 'Перейти к рекомендациям',\n    target: '#recommendations'\n  });\n}\n\n// MEDIUM: draft recommendations waiting for approval\nif (draftCount > 0) {\n  actions.push({\n    id: 'draft',\n    priority: 'medium',\n    type: 'approve',\n    title: 'Одобрить рекомендации',\n    description: `${draftCount} ${draftCount === 1 ? 'рекомендация ждёт' : 'рекомендации ждут'} вашего решения (одобрить или отклонить).`,\n    amount: null,\n    cta_label: 'Перейти к рекомендациям',\n    target: '#recommendations'\n  });\n}\n\n// MEDIUM: stale competitor observations\nif (staleObs > 0 && freshObs === 0) {\n  actions.push({\n    id: 'stale_obs',\n    priority: 'medium',\n    type: 'market',\n    title: 'Данные конкурентов устарели',\n    description: `${staleObs} ${staleObs === 1 ? 'наблюдение старше' : 'наблюдений старше'} 14 дней. Актуальных данных нет. Рекомендации могут быть неточными.`,\n    amount: null,\n    cta_label: 'Добавить наблюдение',\n    target: '#competitors'\n  });\n} else if (staleObs > 0) {\n  actions.push({\n    id: 'stale_obs',\n    priority: 'low',\n    type: 'market',\n    title: 'Часть данных конкурентов устарела',\n    description: `${staleObs} из ${staleObs + freshObs} наблюдений старше 14 дней. Обновите при возможности.`,\n    amount: null,\n    cta_label: 'Добавить наблюдение',\n    target: '#competitors'\n  });\n}\n\n// MEDIUM: market above base price\nif (marketMedian != null && marketMedian > BASE_PRICE * 1.1) {\n  const diff = Math.round(marketMedian - BASE_PRICE);\n  actions.push({\n    id: 'market_high',\n    priority: 'medium',\n    type: 'market',\n    title: 'Рынок выше базовой цены',\n    description: `Медиана рынка: ${Math.round(marketMedian).toLocaleString('ru-RU')} ₽/сут — на ${diff.toLocaleString('ru-RU')} ₽ выше базы. Возможно поднять цены.`,\n    amount: diff,\n    cta_label: 'Смотреть данные рынка',\n    target: '#market'\n  });\n}\n\n// LOW / INFO: if no urgent actions\nif (actions.length === 0) {\n  actions.push({\n    id: 'all_good',\n    priority: 'low',\n    type: 'info',\n    title: 'Срочных действий нет',\n    description: `Сейчас нет ни маленьких окон, ни ожидающих рекомендаций. Проверьте свежесть данных конкурентов${activeComp > 0 ? ' (' + activeComp + ' активных)' : ''}.`,\n    amount: null,\n    cta_label: 'Обзор рынка',\n    target: '#market'\n  });\n}\n\nreturn [{\n  json: {\n    ok: true,\n    action: 'revenue_dashboard',\n    summary: {\n      total_gaps: totalGaps,\n      total_estimated_loss: totalLoss,\n      active_competitors: activeComp,\n      market_median: marketMedian,\n      draft_recommendations: draftCount,\n      approved_recommendations: approvedCount,\n      exported_recommendations: exportedCount,\n      manually_applied_recommendations: manualApplied,\n      apply_failed_recommendations: applyFailed,\n      stale_observations: staleObs,\n      fresh_observations: freshObs\n    },\n    today_actions: actions,\n    top_gaps: topGaps,\n    top_recommendations: topRecs,\n    latest_audit: latestAudit\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "format-revenue-dashboard",
+      "name": "Format Revenue Dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        3400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-revenue-dashboard",
+      "name": "Respond Revenue Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        4300,
+        3400
+      ]
     }
   ],
   "connections": {
@@ -2569,7 +2652,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Revenue Dashboard",
             "type": "main",
             "index": 0
           }
@@ -2592,6 +2675,46 @@
         [
           {
             "node": "Respond Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Revenue Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Revenue Dashboard Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revenue Dashboard Query": {
+      "main": [
+        [
+          {
+            "node": "Format Revenue Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Revenue Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Respond Revenue Dashboard",
             "type": "main",
             "index": 0
           }
