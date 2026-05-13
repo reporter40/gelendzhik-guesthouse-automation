@@ -384,7 +384,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  (SELECT json_agg(g ORDER BY g.estimated_loss DESC NULLS LAST, g.gap_start)\n   FROM (\n     SELECT gw.apartment_id, a.name AS apartment_name,\n            to_char(gw.gap_start,'YYYY-MM-DD') AS gap_start,\n            to_char(gw.gap_end,'YYYY-MM-DD')   AS gap_end,\n            gw.nights, gw.estimated_loss::float AS estimated_loss,\n            gw.recommendation, gw.status,\n            to_char(gw.detected_at,'YYYY-MM-DD') AS detected_at\n     FROM gap_windows gw\n     JOIN apartments a ON a.id = gw.apartment_id\n     WHERE gw.status = 'open' AND gw.gap_start >= CURRENT_DATE\n   ) g\n  ) AS gap_windows,\n  (SELECT json_agg(cp ORDER BY cp.date_from)\n   FROM (\n     SELECT source, title, url, location, max_guests, rooms,\n            to_char(date_from,'YYYY-MM-DD') AS date_from,\n            to_char(date_to,'YYYY-MM-DD')   AS date_to,\n            price_per_night::float AS price_per_night,\n            rating::float AS rating, reviews_count, notes,\n            to_char(collected_at,'YYYY-MM-DD') AS collected_at\n     FROM competitor_prices ORDER BY date_from\n   ) cp\n  ) AS competitor_prices,\n  (SELECT json_agg(r ORDER BY r.date_from)\n   FROM (\n     SELECT apartment_id, to_char(date_from,'YYYY-MM-DD') AS date_from,\n            to_char(date_to,'YYYY-MM-DD') AS date_to, nights,\n            current_price::float AS current_price,\n            market_median::float AS market_median,\n            recommended_price::float AS recommended_price,\n            recommendation_type, reason, confidence::float AS confidence,\n            status\n     FROM pricing_recommendations\n     WHERE status IN ('draft','approved') AND date_from >= CURRENT_DATE\n     ORDER BY date_from\n   ) r\n  ) AS pricing_recommendations,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_gaps,\n  (SELECT COALESCE(SUM(estimated_loss),0)::float FROM gap_windows WHERE status='open' AND gap_start>=CURRENT_DATE) AS total_estimated_loss,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=1 AND gap_start>=CURRENT_DATE) AS one_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=2 AND gap_start>=CURRENT_DATE) AS two_night_gaps,\n  (SELECT COUNT(*)::int FROM gap_windows WHERE status='open' AND nights=3 AND gap_start>=CURRENT_DATE) AS three_night_gaps,\n  (SELECT COUNT(*)::int FROM competitor_prices) AS competitor_count,\n  (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night)::float\n   FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_median,\n  (SELECT MIN(price_per_night)::float FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_min,\n  (SELECT MAX(price_per_night)::float FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_max,\n  (SELECT AVG(price_per_night)::float FROM competitor_prices\n   WHERE date_from <= CURRENT_DATE + INTERVAL '30 days'\n     AND date_to   >= CURRENT_DATE - INTERVAL '30 days') AS market_avg,\n  (SELECT COUNT(*)::int FROM pricing_recommendations WHERE status='draft' AND date_from>=CURRENT_DATE) AS recommendations_count",
+        "query": "WITH gap_data AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss,\n    COUNT(*) FILTER (WHERE nights = 1) AS one_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 2) AS two_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 3) AS three_night_gaps\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_prices AS (\n  SELECT\n    COUNT(*) AS competitor_count,\n    MIN(price_per_night) AS market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n    AVG(price_per_night) AS market_avg,\n    MAX(price_per_night) AS market_max\n  FROM competitor_prices\n  WHERE date_from <= NOW() AND date_to >= NOW()\n),\ncomp_sources AS (\n  SELECT\n    COUNT(*) AS competitor_sources_count,\n    COUNT(*) FILTER (WHERE status = 'active') AS active_competitors_count,\n    COUNT(*) FILTER (WHERE status = 'excluded') AS excluded_competitors_count,\n    MIN(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_median,\n    AVG(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_avg,\n    MAX(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_max\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\nrec_data AS (\n  SELECT COUNT(*) AS recommendations_count\n  FROM pricing_recommendations\n  WHERE status IN ('draft', 'approved')\n),\ngap_json AS (\n  SELECT json_agg(row_to_json(g)) AS gap_windows\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights, estimated_loss, recommendation, status\n    FROM gap_windows WHERE status = 'open' ORDER BY gap_start, apartment_id\n  ) g\n),\ncp_json AS (\n  SELECT json_agg(row_to_json(c)) AS competitor_prices\n  FROM (\n    SELECT source, title, url, location, date_from, date_to, price_per_night, notes\n    FROM competitor_prices ORDER BY collected_at DESC LIMIT 20\n  ) c\n),\nobs_json AS (\n  SELECT json_agg(row_to_json(o)) AS latest_observations\n  FROM (\n    SELECT cs.name AS competitor_name, cs.similarity_score,\n           cpo.stay_date_from, cpo.stay_date_to, cpo.price_per_night,\n           cpo.confidence, cpo.collection_method, cpo.observed_at\n    FROM competitor_price_observations cpo\n    JOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n    ORDER BY cpo.observed_at DESC LIMIT 10\n  ) o\n)\nSELECT\n  gd.total_gaps, gd.total_estimated_loss,\n  gd.one_night_gaps, gd.two_night_gaps, gd.three_night_gaps,\n  cp.competitor_count, cp.market_min, cp.market_median, cp.market_avg, cp.market_max,\n  cs2.competitor_sources_count, cs2.active_competitors_count, cs2.excluded_competitors_count,\n  cs2.cs_market_min, cs2.cs_market_median, cs2.cs_market_avg, cs2.cs_market_max,\n  rd.recommendations_count,\n  gj.gap_windows, cpj.competitor_prices, oj.latest_observations\nFROM gap_data gd, comp_prices cp, comp_sources cs2, rec_data rd,\n     gap_json gj, cp_json cpj, obs_json oj",
         "options": {}
       },
       "id": "revenue_query",
@@ -572,7 +572,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const row = $input.first().json;\nreturn [{ json: {\n  ok: true,\n  action: 'revenue',\n  gap_windows:           row.gap_windows           || [],\n  competitor_prices:     row.competitor_prices     || [],\n  pricing_recommendations: row.pricing_recommendations || [],\n  summary: {\n    total_gaps:           row.total_gaps           || 0,\n    total_estimated_loss: row.total_estimated_loss || 0,\n    one_night_gaps:       row.one_night_gaps       || 0,\n    two_night_gaps:       row.two_night_gaps       || 0,\n    three_night_gaps:     row.three_night_gaps     || 0,\n    competitor_count:     row.competitor_count     || 0,\n    market_min:           row.market_min    != null ? Number(row.market_min)    : null,\n    market_median:        row.market_median != null ? Number(row.market_median) : null,\n    market_avg:           row.market_avg    != null ? Number(row.market_avg)    : null,\n    market_max:           row.market_max    != null ? Number(row.market_max)    : null,\n    recommendations_count: row.recommendations_count || 0\n  }\n} }];\n"
+        "jsCode": "const r = $input.first().json;\n\n// Market stats from competitor_sources + observations\nconst mMin = r.cs_market_min ? parseFloat(r.cs_market_min) : (r.market_min ? parseFloat(r.market_min) : null);\nconst mMed = r.cs_market_median ? parseFloat(r.cs_market_median) : (r.market_median ? parseFloat(r.market_median) : null);\nconst mAvg = r.cs_market_avg ? parseFloat(r.cs_market_avg) : (r.market_avg ? parseFloat(r.market_avg) : null);\nconst mMax = r.cs_market_max ? parseFloat(r.cs_market_max) : (r.market_max ? parseFloat(r.market_max) : null);\n\nreturn [{ json: {\n  ok: true,\n  action: 'revenue',\n  summary: {\n    total_gaps: parseInt(r.total_gaps) || 0,\n    total_estimated_loss: parseFloat(r.total_estimated_loss) || 0,\n    one_night_gaps: parseInt(r.one_night_gaps) || 0,\n    two_night_gaps: parseInt(r.two_night_gaps) || 0,\n    three_night_gaps: parseInt(r.three_night_gaps) || 0,\n    competitor_count: parseInt(r.competitor_count) || 0,\n    competitor_sources_count: parseInt(r.competitor_sources_count) || 0,\n    active_competitors_count: parseInt(r.active_competitors_count) || 0,\n    excluded_competitors_count: parseInt(r.excluded_competitors_count) || 0,\n    market_min: mMin,\n    market_median: mMed,\n    market_avg: mAvg,\n    market_max: mMax,\n    latest_market_median_from_sources: mMed,\n    latest_market_avg_from_sources: mAvg,\n    latest_market_min_from_sources: mMin,\n    latest_market_max_from_sources: mMax,\n    recommendations_count: parseInt(r.recommendations_count) || 0\n  },\n  gap_windows: r.gap_windows ? (typeof r.gap_windows === 'string' ? JSON.parse(r.gap_windows) : r.gap_windows) : [],\n  competitor_prices: r.competitor_prices ? (typeof r.competitor_prices === 'string' ? JSON.parse(r.competitor_prices) : r.competitor_prices) : [],\n  latest_observations: r.latest_observations ? (typeof r.latest_observations === 'string' ? JSON.parse(r.latest_observations) : r.latest_observations) : []\n}}];"
       },
       "id": "format_revenue_c1",
       "name": "Format Revenue",
@@ -616,6 +616,366 @@
           "name": "Gelendzhik DB"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cs_action_check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_sources",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-competitor-sources-c15",
+      "name": "If Competitor Sources",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1250
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  cs.id, cs.name, cs.source_platform, cs.url, cs.address, cs.district,\n  cs.similarity_score, cs.priority, cs.status, cs.property_type,\n  cs.area_m2, cs.max_guests, cs.rooms,\n  cs.distance_to_beach_m, cs.distance_to_center_m,\n  cs.has_private_entrance, cs.has_private_kitchen, cs.has_balcony_or_terrace,\n  cs.amenities, cs.min_stay, cs.target_audience,\n  cs.price_low, cs.price_high,\n  cs.selection_reason, cs.exclusion_reason,\n  cs.last_checked_at,\n  cs.created_at, cs.updated_at,\n  (SELECT MAX(cpo.observed_at) FROM competitor_price_observations cpo WHERE cpo.competitor_source_id = cs.id) AS last_observed_at,\n  (SELECT cpo.price_per_night FROM competitor_price_observations cpo WHERE cpo.competitor_source_id = cs.id ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price\nFROM competitor_sources cs\nORDER BY cs.status, cs.priority",
+        "additionalFields": {}
+      },
+      "id": "pg-competitor-sources-c15",
+      "name": "Competitor Sources Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_sources',\n  competitor_sources: rows,\n  summary: {\n    total: rows.length,\n    active: rows.filter(r=>r.status==='active').length,\n    excluded: rows.filter(r=>r.status==='excluded').length\n  }\n}}];"
+      },
+      "id": "code-format-cs-c15",
+      "name": "Format Competitor Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-cs-c15",
+      "name": "Respond Competitor Sources",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cpo_action_check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_price_observations",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-competitor-obs-c15",
+      "name": "If Competitor Observations",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1380
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  cpo.id, cs.name AS competitor_name, cs.similarity_score,\n  cs.source_platform, cs.url AS competitor_url,\n  cpo.observed_at, cpo.stay_date_from, cpo.stay_date_to, cpo.nights,\n  cpo.price_per_night, cpo.total_price, cpo.min_stay,\n  cpo.availability_status, cpo.confidence,\n  cpo.collection_method, cpo.notes,\n  cpo.created_at\nFROM competitor_price_observations cpo\nJOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\nORDER BY cpo.observed_at DESC\nLIMIT 50",
+        "additionalFields": {}
+      },
+      "id": "pg-competitor-obs-c15",
+      "name": "Competitor Observations Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1330
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_price_observations',\n  observations: rows,\n  count: rows.length\n}}];"
+      },
+      "id": "code-format-obs-c15",
+      "name": "Format Competitor Observations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        1330
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-obs-c15",
+      "name": "Respond Competitor Observations",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        1330
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ms_action_check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_market_summary",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-market-summary-c15",
+      "name": "If Market Summary",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1510
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH active_obs AS (\n  SELECT cpo.price_per_night, cs.similarity_score,\n         cpo.observed_at,\n         (NOW() - cpo.observed_at) > INTERVAL '14 days' AS is_stale\n  FROM competitor_price_observations cpo\n  JOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n  WHERE cs.status = 'active' AND cs.similarity_score >= 80\n),\nfresh AS (SELECT * FROM active_obs WHERE NOT is_stale),\nall_obs AS (SELECT * FROM active_obs)\nSELECT\n  (SELECT COUNT(DISTINCT cs.id) FROM competitor_sources cs WHERE cs.status='active') AS active_sources,\n  (SELECT COUNT(DISTINCT cs.id) FROM competitor_sources cs WHERE cs.status='excluded') AS excluded_sources,\n  (SELECT MIN(price_per_night) FROM all_obs) AS market_min,\n  (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) FROM all_obs) AS market_median,\n  (SELECT AVG(price_per_night) FROM all_obs) AS market_avg,\n  (SELECT MAX(price_per_night) FROM all_obs) AS market_max,\n  (SELECT COUNT(*) FROM all_obs) AS total_observations,\n  (SELECT COUNT(*) FROM fresh) AS fresh_observations_14d,\n  (SELECT MAX(observed_at) FROM all_obs) AS latest_observed_at,\n  (SELECT json_agg(row_to_json(cs)) FROM (\n    SELECT cs.name, cs.similarity_score, cs.status, cs.price_low, cs.price_high,\n           (SELECT cpo.price_per_night FROM competitor_price_observations cpo WHERE cpo.competitor_source_id=cs.id ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price,\n           (SELECT MAX(cpo.observed_at) FROM competitor_price_observations cpo WHERE cpo.competitor_source_id=cs.id) AS last_observed\n    FROM competitor_sources cs WHERE cs.status='active' ORDER BY cs.priority\n  ) cs) AS competitor_details",
+        "additionalFields": {}
+      },
+      "id": "pg-market-summary-c15",
+      "name": "Market Summary Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst staleWarning = (r.fresh_observations_14d === 0)\n  ? 'Все данные seed/устаревшие (> 14 дней). Рекомендуется ручная проверка цен конкурентов.'\n  : null;\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_market_summary',\n  market: {\n    active_sources: r.active_sources,\n    excluded_sources: r.excluded_sources,\n    market_min: r.market_min ? parseFloat(r.market_min) : null,\n    market_median: r.market_median ? parseFloat(r.market_median) : null,\n    market_avg: r.market_avg ? parseFloat(r.market_avg) : null,\n    market_max: r.market_max ? parseFloat(r.market_max) : null,\n    total_observations: r.total_observations,\n    fresh_observations_14d: r.fresh_observations_14d,\n    latest_observed_at: r.latest_observed_at,\n    stale_warning: staleWarning,\n    competitor_details: r.competitor_details\n  }\n}}];"
+      },
+      "id": "code-format-ms-c15",
+      "name": "Format Market Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        1460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-ms-c15",
+      "name": "Respond Market Summary",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        1460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cum_action_check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_source_update_manual",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-competitor-update-c15",
+      "name": "If Competitor Update Manual",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = ($('Webhook').first().json.body) || $input.first().json || {};\nconst id = body.competitor_source_id || body.id || null;\nconst price_per_night = body.price_per_night ? parseFloat(body.price_per_night) : null;\nconst stay_date_from = body.stay_date_from || body.date_from || null;\nconst stay_date_to = body.stay_date_to || body.date_to || null;\nconst notes = body.notes || 'manual_input via Admin API';\nconst confidence = body.confidence ? parseFloat(body.confidence) : 0.90;\n\nif (!id || !price_per_night || !stay_date_from || !stay_date_to) {\n  throw new Error('Missing required fields: competitor_source_id, price_per_night, stay_date_from, stay_date_to');\n}\n\nconst nights = Math.round((new Date(stay_date_to) - new Date(stay_date_from)) / 86400000);\n\nreturn [{json: {\n  q_id: id,\n  q_price: price_per_night,\n  q_from: stay_date_from,\n  q_to: stay_date_to,\n  q_nights: nights,\n  q_confidence: confidence,\n  q_notes: notes\n}}];"
+      },
+      "id": "code-prep-update-c15",
+      "name": "Prep Competitor Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1590
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO competitor_price_observations\n  (competitor_source_id, stay_date_from, stay_date_to, nights, price_per_night,\n   confidence, collection_method, notes)\nVALUES\n  ('{{ $json.q_id }}', '{{ $json.q_from }}', '{{ $json.q_to }}', {{ $json.q_nights }},\n   {{ $json.q_price }}, {{ $json.q_confidence }}, 'manual_input', '{{ $json.q_notes }}');\nUPDATE competitor_sources SET last_checked_at = NOW(), updated_at = NOW()\nWHERE id = '{{ $json.q_id }}';",
+        "additionalFields": {}
+      },
+      "id": "pg-competitor-update-c15",
+      "name": "Competitor Update Insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        1590
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\":true,\"action\":\"competitor_source_update_manual\",\"message\":\"observation added\"}",
+        "options": {
+          "responseCode": 201,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-update-c15",
+      "name": "Respond Competitor Update",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        1590
+      ]
     }
   ],
   "connections": {
@@ -837,7 +1197,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Competitor Sources",
             "type": "main",
             "index": 0
           }
@@ -904,6 +1264,166 @@
         [
           {
             "node": "Format Add Competitor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Competitor Sources": {
+      "main": [
+        [
+          {
+            "node": "Competitor Sources Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Competitor Observations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Competitor Sources Query": {
+      "main": [
+        [
+          {
+            "node": "Format Competitor Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Competitor Sources": {
+      "main": [
+        [
+          {
+            "node": "Respond Competitor Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Competitor Observations": {
+      "main": [
+        [
+          {
+            "node": "Competitor Observations Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Market Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Competitor Observations Query": {
+      "main": [
+        [
+          {
+            "node": "Format Competitor Observations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Competitor Observations": {
+      "main": [
+        [
+          {
+            "node": "Respond Competitor Observations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Market Summary": {
+      "main": [
+        [
+          {
+            "node": "Market Summary Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Competitor Update Manual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Market Summary Query": {
+      "main": [
+        [
+          {
+            "node": "Format Market Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Market Summary": {
+      "main": [
+        [
+          {
+            "node": "Respond Market Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Competitor Update Manual": {
+      "main": [
+        [
+          {
+            "node": "Prep Competitor Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Competitor Update": {
+      "main": [
+        [
+          {
+            "node": "Competitor Update Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Competitor Update Insert": {
+      "main": [
+        [
+          {
+            "node": "Respond Competitor Update",
             "type": "main",
             "index": 0
           }

@@ -1,0 +1,210 @@
+{
+  "name": "13 — Competitor Monitor",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-c13",
+      "name": "Daily 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, source_platform, url, similarity_score, priority, last_checked_at FROM competitor_sources WHERE status = 'active' ORDER BY priority",
+        "additionalFields": {}
+      },
+      "id": "pg-load-active-sources-c13",
+      "name": "Load Active Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check monitoring rules\nconst sources = $input.all().map(i => i.json);\nif (sources.length === 0) {\n  return [{ json: { skip: true, reason: 'No active competitor sources' } }];\n}\n\n// Safe fetch rules:\n// - Only fetch sites that have safe_fetch allowed\n// - Respect 10-30 second delays\n// - Do not bypass CAPTCHA\n// - Do not login\n// - Return manual_review_required if fetch fails or price not found\n\nconst allowed_platforms = ['gelendzhik.travel', 'travelandia.ru'];\n\nconst toProcess = sources.filter(s => {\n  const platformAllowed = allowed_platforms.includes(s.source_platform);\n  // Check if already checked today\n  const lastChecked = s.last_checked_at ? new Date(s.last_checked_at) : null;\n  const checkedToday = lastChecked && (new Date() - lastChecked) < 23 * 3600 * 1000;\n  return platformAllowed && !checkedToday;\n});\n\nif (toProcess.length === 0) {\n  return [{ json: { skip: true, reason: 'All sources checked recently or platform not allowed' } }];\n}\n\nreturn toProcess.map(s => ({ json: s }));\n"
+      },
+      "id": "code-filter-sources-c13",
+      "name": "Filter Processable Sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip_check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-skip-c13",
+      "name": "Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── SAFE FETCH PLACEHOLDER ───────────────────────────────────────────────\n// This workflow is INACTIVE (C1.5 placeholder).\n// When activated in C3:\n// 1. Use HTTP Request node with custom User-Agent and delays\n// 2. Parse price from page HTML using regex / CSS selectors\n// 3. If price found → insert competitor_price_observation with method='safe_fetch'\n// 4. If price NOT found or error → insert with availability_status='manual_review_required'\n// 5. Always update competitor_sources.last_checked_at\n//\n// ToS compliance:\n// - gelendzhik.travel: no robots.txt restriction found for this path (verify on activation)\n// - travelandia.ru: verify robots.txt before activation\n// - Add 10-30 sec random delay between requests\n// - Use legitimate User-Agent (e.g. Mozilla/5.0)\n// - Never bypass CAPTCHA\n// - Never login to competitor sites\n// - Max 1 request per site per day\n//\n// For now: write manual_review_required observations\nconst source = $input.first().json;\nconst today = new Date().toISOString().split('T')[0];\nconst nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];\n\nreturn [{ json: {\n  q_source_id: source.id,\n  q_from: today,\n  q_to: nextMonth,\n  q_nights: 30,\n  q_price: null,\n  q_status: 'manual_review_required',\n  q_method: 'safe_fetch',\n  q_confidence: null,\n  q_notes: `Auto-check placeholder (C1.5). Workflow inactive. Manual review required for: ${source.name} (${source.source_platform}).`\n}}];\n"
+      },
+      "id": "code-safe-fetch-c13",
+      "name": "Safe Fetch Logic (placeholder)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO competitor_price_observations\n  (competitor_source_id, stay_date_from, stay_date_to, nights,\n   price_per_night, availability_status, confidence,\n   collection_method, notes)\nVALUES\n  ('{{ $json.q_source_id }}', '{{ $json.q_from }}', '{{ $json.q_to }}',\n   {{ $json.q_nights }}, null, '{{ $json.q_status }}', null,\n   '{{ $json.q_method }}', '{{ $json.q_notes }}');\nUPDATE competitor_sources SET last_checked_at = NOW(), updated_at = NOW()\nWHERE id = '{{ $json.q_source_id }}';",
+        "additionalFields": {}
+      },
+      "id": "pg-write-obs-c13",
+      "name": "Write Observation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Workflow completed. Sources skipped or already checked today.\nreturn [{ json: { ok: true, message: 'Competitor monitor: no sources to process today.' } }];\n"
+      },
+      "id": "code-done-skip-c13",
+      "name": "Done (skipped)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 09:00": {
+      "main": [
+        [
+          {
+            "node": "Load Active Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Active Sources": {
+      "main": [
+        [
+          {
+            "node": "Filter Processable Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Processable Sources": {
+      "main": [
+        [
+          {
+            "node": "Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip?": {
+      "main": [
+        [
+          {
+            "node": "Done (skipped)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Fetch Logic (placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe Fetch Logic (placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Write Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {}
+}

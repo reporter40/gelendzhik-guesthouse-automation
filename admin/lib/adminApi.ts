@@ -86,6 +86,55 @@ export type PricingRecommendation = {
   status: string;
 };
 
+export type CompetitorSource = {
+  id: string;
+  name: string;
+  source_platform: string;
+  url: string;
+  address: string | null;
+  district: string | null;
+  similarity_score: number;
+  priority: number;
+  status: "active" | "excluded" | "archived" | "pending";
+  property_type: string | null;
+  area_m2: number | null;
+  max_guests: number | null;
+  rooms: number | null;
+  distance_to_beach_m: number | null;
+  distance_to_center_m: number | null;
+  has_private_entrance: boolean | null;
+  has_private_kitchen: boolean | null;
+  has_balcony_or_terrace: boolean | null;
+  amenities: Record<string, boolean>;
+  min_stay: number | null;
+  target_audience: string | null;
+  price_low: number | null;
+  price_high: number | null;
+  selection_reason: string | null;
+  exclusion_reason: string | null;
+  last_checked_at: string | null;
+  latest_price: number | null;
+  last_observed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CompetitorPriceObservation = {
+  id: string;
+  competitor_name: string;
+  similarity_score: number;
+  source_platform: string;
+  competitor_url: string;
+  observed_at: string;
+  stay_date_from: string;
+  stay_date_to: string;
+  nights: number | null;
+  price_per_night: number | null;
+  confidence: number | null;
+  collection_method: string;
+  notes: string | null;
+};
+
 export type RevenueSummary = {
   total_gaps: number;
   total_estimated_loss: number;
@@ -93,16 +142,25 @@ export type RevenueSummary = {
   two_night_gaps: number;
   three_night_gaps: number;
   competitor_count: number;
+  competitor_sources_count: number;
+  active_competitors_count: number;
+  excluded_competitors_count: number;
   market_min: number | null;
   market_median: number | null;
   market_avg: number | null;
   market_max: number | null;
+  latest_market_min_from_sources: number | null;
+  latest_market_median_from_sources: number | null;
+  latest_market_avg_from_sources: number | null;
+  latest_market_max_from_sources: number | null;
   recommendations_count: number;
 };
 
 export type RevenueData = {
   gap_windows: GapWindow[];
   competitor_prices: CompetitorPrice[];
+  competitor_sources?: CompetitorSource[];
+  latest_observations?: CompetitorPriceObservation[];
   pricing_recommendations: PricingRecommendation[];
   summary: RevenueSummary;
 };

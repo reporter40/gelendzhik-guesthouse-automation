@@ -5,14 +5,22 @@
     {
       "parameters": {
         "rule": {
-          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
         }
       },
       "id": "schedule-trigger-12",
       "name": "Daily 08:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
@@ -24,8 +32,16 @@
       "name": "Load Gap Windows",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [460, 300],
-      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     },
     {
       "parameters": {
@@ -37,26 +53,49 @@
       "name": "Load Market Data",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [460, 460],
-      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+      "position": [
+        460,
+        460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Merge gap windows with market data\nconst gaps   = $('Load Gap Windows').all().map(i => i.json);\nconst mktRow = $('Load Market Data').first()?.json || {};\n\nconst marketMedian = mktRow.market_median ? Number(mktRow.market_median) : null;\nconst marketMin    = mktRow.market_min    ? Number(mktRow.market_min)    : null;\nconst marketMax    = mktRow.market_max    ? Number(mktRow.market_max)    : null;\nconst marketAvg    = mktRow.market_avg    ? Number(mktRow.market_avg)    : null;\nconst hasMarket    = marketMedian !== null;\n\nconst recs = [];\n\nfor (const g of gaps) {\n  const base   = g.base_price ? Number(g.base_price) : null;\n  const nights = Number(g.nights);\n  let recommended, recType, reason, confidence;\n\n  if (nights === 1) {\n    recType  = 'gap_special_price';\n    reason   = 'Короткое окно 1 ночь: лучше продать спецценой, чем оставить пустым.';\n    if (hasMarket && base) {\n      recommended = Math.max(base * 0.85, marketMedian * 0.80);\n      confidence  = 0.70;\n    } else if (base) {\n      recommended = base * 0.85;\n      confidence  = 0.45;\n    } else continue;\n  } else if (nights === 2) {\n    recType  = 'gap_special_price';\n    reason   = 'Окно 2 ночи: можно продать коротким заездом со сниженной ценой.';\n    if (hasMarket && base) {\n      recommended = Math.max(base * 0.90, marketMedian * 0.90);\n      confidence  = 0.70;\n    } else if (base) {\n      recommended = base * 0.90;\n      confidence  = 0.45;\n    } else continue;\n  } else {\n    recType  = 'gap_special_price';\n    reason   = 'Окно 3 ночи: можно продавать как короткий заезд без сильной скидки.';\n    if (hasMarket && base) {\n      recommended = Math.max(base, marketMedian * 0.95);\n      confidence  = 0.65;\n    } else if (base) {\n      recommended = base * 0.95;\n      confidence  = 0.50;\n    } else continue;\n  }\n\n  // Override: raise_price if market >> base\n  if (hasMarket && base && marketMedian > base * 1.20) {\n    recType    = 'raise_price';\n    recommended = Math.round(marketMedian * 0.90);\n    reason     = `Рынок (₽${Math.round(marketMedian)}) заметно выше базовой цены (₽${Math.round(base)}). Рекомендуем повысить цену.`;\n    confidence  = 0.65;\n  }\n  // Override: lower_price if market << base\n  if (hasMarket && base && marketMedian < base * 0.80) {\n    recType    = 'lower_price';\n    recommended = Math.round(marketMedian * 1.05);\n    reason     = `Рынок (₽${Math.round(marketMedian)}) ниже базовой цены (₽${Math.round(base)}). Есть риск простоя.`;\n    confidence  = 0.60;\n  }\n\n  recs.push({\n    apartment_id:        g.apartment_id,\n    date_from:           g.date_from,\n    date_to:             g.date_to,\n    nights,\n    current_price:       base,\n    market_min:          marketMin,\n    market_median:       marketMedian,\n    market_avg:          marketAvg,\n    market_max:          marketMax,\n    recommended_price:   Math.round(recommended),\n    recommendation_type: recType,\n    reason,\n    confidence,\n    source:              'c1_rules',\n    status:              'draft'\n  });\n}\n\nif (recs.length === 0) {\n  return [{ json: { _no_recs: true, message: 'No recommendations generated' } }];\n}\nreturn recs.map(r => ({ json: r }));\n"
+        "jsCode": "// ── Inputs ─────────────────────────────────────────────────────────────────\nconst gaps = $('Load Gap Windows').all().map(i => i.json);\nconst marketRows = $('Load Market Data').all().map(i => i.json);\nconst csRows = $('Load Competitor Sources').all();\n\n// ── Market data from competitor_sources (C1.5 weighted) ─────────────────\nconst csData = csRows.length > 0 ? csRows[0].json : null;\nlet csMedian = csData?.market_median ? parseFloat(csData.market_median) : null;\nconst csWeightedAvg = csData?.weighted_avg ? parseFloat(csData.weighted_avg) : null;\nconst csMin = csData?.market_min ? parseFloat(csData.market_min) : null;\nconst csMax = csData?.market_max ? parseFloat(csData.market_max) : null;\nconst hasStaleData = csData?.has_stale_data === true;\nconst freshCount = csData?.fresh_count ? parseInt(csData.fresh_count) : 0;\nconst sourceCount = csData?.source_count ? parseInt(csData.source_count) : 0;\nconst sourceDetails = csData?.source_details || [];\n\n// ── Market data from competitor_prices (C1 legacy) ────────────────────────\nconst legacyPrices = marketRows.map(r => parseFloat(r.price_per_night)).filter(p => p > 0);\nconst legacyMedian = legacyPrices.length > 0\n  ? legacyPrices.sort((a,b)=>a-b)[Math.floor(legacyPrices.length/2)]\n  : null;\n\n// Use C1.5 sources if available (priority), fall back to C1 legacy\nconst market_median = csMedian || csWeightedAvg || legacyMedian;\nconst market_min = csMin || (legacyPrices.length ? Math.min(...legacyPrices) : null);\nconst market_max = csMax || (legacyPrices.length ? Math.max(...legacyPrices) : null);\n\n// ── Build competitor names string for reason ──────────────────────────────\nconst competitorNames = sourceDetails\n  .filter(s => s.similarity_score >= 90)\n  .map(s => s.name.replace('Двухкомнатная квартира ', '').replace('Этаж под ключ ', 'Этаж '))\n  .join(', ');\nconst sourceNote = competitorNames\n  ? `Рекомендация основана на прямых конкурентах: ${competitorNames}.`\n  : 'Рекомендация основана на данных рынка.';\nconst staleNote = hasStaleData || freshCount === 0\n  ? ' Данные seed требуют перепроверки.'\n  : '';\n\n// ── Apartments lookup ─────────────────────────────────────────────────────\n// (we pull base_price from gap_windows estimated_loss / nights if apartments not loaded)\nconst aptPrices = {};\nfor (const g of gaps) {\n  if (g.estimated_loss && g.nights && !aptPrices[g.apartment_id]) {\n    aptPrices[g.apartment_id] = Math.round(g.estimated_loss / g.nights);\n  }\n}\n\nconst recs = [];\n\nfor (const gap of gaps) {\n  if (gap.status !== 'open') continue;\n  const nights = parseInt(gap.nights);\n  if (nights < 1 || nights > 3) continue;\n\n  const base_price = aptPrices[gap.apartment_id] || 6000;\n  const hasMarket = market_median !== null;\n\n  // ── Confidence ────────────────────────────────────────────────────────\n  let confidence;\n  if (!hasMarket) {\n    confidence = 0.35;\n  } else if (freshCount === 0) {\n    confidence = 0.45;   // seed data only\n  } else if (freshCount >= 2) {\n    confidence = 0.75;\n  } else {\n    confidence = 0.60;\n  }\n\n  // ── Pricing rules ─────────────────────────────────────────────────────\n  let recommended_price, recommendation_type, reason;\n\n  if (nights === 1) {\n    recommendation_type = 'gap_special_price';\n    const candidate1 = base_price * 0.85;\n    const candidate2 = hasMarket ? market_median * 0.80 : 0;\n    recommended_price = Math.round(Math.max(candidate1, candidate2));\n    reason = `Короткое окно 1 ночь: лучше продать спецценой, чем оставить пустым. ${sourceNote}${staleNote}`;\n  } else if (nights === 2) {\n    recommendation_type = 'gap_special_price';\n    const candidate1 = base_price * 0.90;\n    const candidate2 = hasMarket ? market_median * 0.90 : 0;\n    recommended_price = Math.round(Math.max(candidate1, candidate2));\n    reason = `Окно 2 ночи: можно продать коротким заездом со сниженной ценой. ${sourceNote}${staleNote}`;\n  } else {\n    recommendation_type = 'gap_special_price';\n    const candidate1 = base_price;\n    const candidate2 = hasMarket ? market_median * 0.95 : 0;\n    recommended_price = Math.round(Math.max(candidate1, candidate2));\n    reason = `Окно 3 ночи: можно продавать как короткий заезд без сильной скидки. ${sourceNote}${staleNote}`;\n  }\n\n  // ── Market raise/lower override ───────────────────────────────────────\n  if (hasMarket) {\n    if (market_median > base_price * 1.20) {\n      recommendation_type = 'raise_price';\n      recommended_price = Math.round(market_median * 0.95);\n      reason = `Рынок заметно выше базовой цены (+20%). ${sourceNote}${staleNote}`;\n    } else if (market_median < base_price * 0.80 && nights <= 2) {\n      recommendation_type = 'lower_price';\n      recommended_price = Math.round(market_median * 1.05);\n      reason = `Рынок ниже текущей цены, есть риск простоя. ${sourceNote}${staleNote}`;\n    }\n  }\n\n  recs.push({\n    apartment_id: gap.apartment_id,\n    date_from: gap.gap_start,\n    date_to: gap.gap_end,\n    nights: nights,\n    current_price: base_price,\n    market_min: market_min,\n    market_median: market_median ? Math.round(market_median) : null,\n    market_avg: csWeightedAvg ? Math.round(csWeightedAvg) : null,\n    market_max: market_max,\n    recommended_price: recommended_price,\n    recommendation_type: recommendation_type,\n    reason: reason,\n    confidence: confidence,\n    source: 'c15_weighted_rules',\n    status: 'draft'\n  });\n}\n\nreturn recs.map(r => ({json: r}));\n"
       },
       "id": "calc-recommendations",
       "name": "Calculate Recommendations",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 380]
+      "position": [
+        680,
+        380
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "loose"},
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "combinator": "and",
-          "conditions": [{"id": "has-recs", "operator": {"type": "string", "operation": "notEmpty"},
-                          "leftValue": "={{ $json.apartment_id }}"}]
+          "conditions": [
+            {
+              "id": "has-recs",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              },
+              "leftValue": "={{ $json.apartment_id }}"
+            }
+          ]
         },
         "options": {}
       },
@@ -64,7 +103,10 @@
       "name": "Has Recommendations?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [900, 380]
+      "position": [
+        900,
+        380
+      ]
     },
     {
       "parameters": {
@@ -80,8 +122,16 @@
       "name": "Upsert Recommendations",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1120, 300],
-      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     },
     {
       "parameters": {
@@ -93,39 +143,139 @@
       "name": "Cleanup Old Recs",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [1120, 460],
-      "credentials": {"postgres": {"id": "gelendzhik_db", "name": "Gelendzhik DB"}}
+      "position": [
+        1120,
+        460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH active_sources AS (\n  SELECT cs.id, cs.name, cs.similarity_score, cs.status,\n         cs.price_low, cs.price_high,\n         cpo.price_per_night,\n         cpo.observed_at,\n         (NOW() - cpo.observed_at) > INTERVAL '14 days' AS is_stale,\n         cpo.confidence\n  FROM competitor_sources cs\n  JOIN LATERAL (\n    SELECT * FROM competitor_price_observations\n    WHERE competitor_source_id = cs.id\n    ORDER BY observed_at DESC LIMIT 1\n  ) cpo ON true\n  WHERE cs.status = 'active' AND cs.similarity_score >= 80\n)\nSELECT\n  COUNT(*) AS source_count,\n  MIN(price_per_night) AS market_min,\n  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n  AVG(price_per_night * (similarity_score / 100.0)) / AVG(similarity_score / 100.0) AS weighted_avg,\n  MAX(price_per_night) AS market_max,\n  bool_or(is_stale) AS has_stale_data,\n  COUNT(*) FILTER (WHERE NOT is_stale) AS fresh_count,\n  json_agg(json_build_object(\n    'name', name,\n    'similarity_score', similarity_score,\n    'price_per_night', price_per_night,\n    'is_stale', is_stale,\n    'confidence', confidence\n  )) AS source_details\nFROM active_sources",
+        "additionalFields": {}
+      },
+      "id": "pg-load-cs-c15",
+      "name": "Load Competitor Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     }
   ],
   "connections": {
     "Daily 08:00": {
       "main": [
-        [{"node": "Load Gap Windows", "type": "main", "index": 0}],
-        [{"node": "Load Market Data",  "type": "main", "index": 0}]
+        [
+          {
+            "node": "Load Gap Windows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Market Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Load Gap Windows": {
-      "main": [[{"node": "Calculate Recommendations", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Calculate Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Load Market Data": {
-      "main": [[{"node": "Calculate Recommendations", "type": "main", "index": 1}]]
+      "main": [
+        [
+          {
+            "node": "Load Competitor Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Calculate Recommendations": {
-      "main": [[{"node": "Has Recommendations?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Has Recommendations?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Has Recommendations?": {
       "main": [
-        [{"node": "Upsert Recommendations", "type": "main", "index": 0}],
-        [{"node": "Cleanup Old Recs",       "type": "main", "index": 0}]
+        [
+          {
+            "node": "Upsert Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cleanup Old Recs",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Upsert Recommendations": {
-      "main": [[{"node": "Cleanup Old Recs", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Cleanup Old Recs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Competitor Sources": {
+      "main": [
+        [
+          {
+            "node": "Calculate Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "versionId": "12-pricing-recommender-v1",
-  "meta": {"templateCredsSetupCompleted": true},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
   "tags": []
 }
