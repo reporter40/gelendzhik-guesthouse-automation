@@ -1,14 +1,16 @@
 "use server";
 
-import { addCompetitorPrice, AdminApiError } from "@/lib/adminApi";
+import { addCompetitorPrice, approveRecommendation, rejectRecommendation, AdminApiError } from "@/lib/adminApi";
 import { requireAuth } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 
-export type AddCompetitorState = {
+export type ActionState = {
   ok: boolean;
   error?: string;
   message?: string;
 };
+
+export type AddCompetitorState = ActionState;
 
 export async function addCompetitorPriceAction(
   _prev: AddCompetitorState,
@@ -50,5 +52,35 @@ export async function addCompetitorPriceAction(
   } catch (e) {
     const msg = e instanceof AdminApiError ? e.message : "Ошибка сохранения";
     return { ok: false, error: msg };
+  }
+}
+
+export async function approveRecommendationAction(
+  recommendation_id: string,
+  reason?: string,
+): Promise<ActionState> {
+  await requireAuth();
+  if (!recommendation_id) return { ok: false, error: "recommendation_id обязателен" };
+  try {
+    await approveRecommendation(recommendation_id, reason);
+    revalidatePath("/revenue");
+    return { ok: true, message: "Рекомендация одобрена" };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка при одобрении" };
+  }
+}
+
+export async function rejectRecommendationAction(
+  recommendation_id: string,
+  reason?: string,
+): Promise<ActionState> {
+  await requireAuth();
+  if (!recommendation_id) return { ok: false, error: "recommendation_id обязателен" };
+  try {
+    await rejectRecommendation(recommendation_id, reason);
+    revalidatePath("/revenue");
+    return { ok: true, message: "Рекомендация отклонена" };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка при отклонении" };
   }
 }

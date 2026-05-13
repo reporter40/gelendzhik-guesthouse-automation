@@ -72,6 +72,7 @@ export type CompetitorPrice = {
 };
 
 export type PricingRecommendation = {
+  id?: string;
   apartment_id: string;
   apartment_name: string;
   date_from: string;
@@ -84,6 +85,23 @@ export type PricingRecommendation = {
   reason: string;
   confidence: number | null;
   status: string;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  recommendation_id: string | null;
+  action: string;
+  previous_status: string | null;
+  new_status: string | null;
+  apartment_id: number | null;
+  date_from: string | null;
+  date_to: string | null;
+  old_price: number | null;
+  new_price: number | null;
+  reason: string | null;
+  actor: string | null;
+  source: string;
+  created_at: string;
 };
 
 export type CompetitorSource = {
@@ -179,6 +197,67 @@ export type AddCompetitorPriceInput = {
   reviews_count?: number;
   notes?: string;
 };
+
+function buildAdminFetch(body: Record<string, unknown>): () => Promise<Response> {
+  const url = process.env.ADMIN_API_URL;
+  const token = process.env.ADMIN_API_TOKEN;
+  if (!url) throw new AdminApiError("ADMIN_API_URL is not configured");
+  if (!token) throw new AdminApiError("ADMIN_API_TOKEN is not configured");
+  return () =>
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+}
+
+export async function approveRecommendation(
+  recommendation_id: string,
+  reason = "Одобрено владельцем",
+): Promise<{ ok: boolean; rec_id?: string; audit_id?: string; error?: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "pricing_recommendation_approve", recommendation_id, reason })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || (body && body.ok === false)) {
+    throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  }
+  return body;
+}
+
+export async function rejectRecommendation(
+  recommendation_id: string,
+  reason = "Отклонено владельцем",
+): Promise<{ ok: boolean; rec_id?: string; audit_id?: string; error?: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "pricing_recommendation_reject", recommendation_id, reason })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || (body && body.ok === false)) {
+    throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  }
+  return body;
+}
+
+export async function fetchAuditLog(): Promise<AuditLogEntry[]> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "pricing_action_audit_log" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  const raw = body?.data ?? body ?? [];
+  return Array.isArray(raw) ? raw : [];
+}
 
 export async function addCompetitorPrice(
   input: AddCompetitorPriceInput,

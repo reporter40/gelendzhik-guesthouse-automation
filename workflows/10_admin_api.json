@@ -50,7 +50,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = ['health', 'bookings', 'templates'];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
+        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
       }
     },
     {
@@ -522,7 +522,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD')   AS date_to,\n       pr.nights, pr.current_price::float, pr.market_min::float,\n       pr.market_median::float, pr.market_avg::float, pr.market_max::float,\n       pr.recommended_price::float, pr.recommendation_type,\n       pr.reason, pr.confidence::float, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
+        "query": "SELECT pr.id::text AS id, apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD')   AS date_to,\n       pr.nights, pr.current_price::float, pr.market_min::float,\n       pr.market_median::float, pr.market_avg::float, pr.market_max::float,\n       pr.recommended_price::float, pr.recommendation_type,\n       pr.reason, pr.confidence::float, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
         "options": {}
       },
       "id": "pricing_recs_query",
@@ -976,6 +976,272 @@
         1500,
         1590
       ]
+    },
+    {
+      "id": "39b6ef53-dc1b-4551-b2fd-a7befca324b2",
+      "name": "If Approve",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1840
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f2286472-a3cd-4511-b35e-943bcb0d708f",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_recommendation_approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f9e0eb71-71e6-4c3d-891f-7923ce0d89fd",
+      "name": "Prep Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1790
+      ],
+      "parameters": {
+        "jsCode": "\nconst body = ($('Webhook').first().json.body) || $input.first().json || {};\nconst rec_id = (body.recommendation_id || '').trim();\nconst reason = (body.reason || 'Одобрено владельцем').replace(/'/g, \"''\");\nif (!rec_id) {\n  return [{ json: { ok: false, error: 'recommendation_id is required' } }];\n}\nreturn [{ json: { q_rec_id: rec_id, q_reason: reason } }];\n"
+      }
+    },
+    {
+      "id": "7637a31e-17c7-4402-a23e-ee9033b7bd22",
+      "name": "Approve DB Exec",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        1790
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_postgres"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH old_rec AS (\n  SELECT id, status, current_price, recommended_price, apartment_id,\n         date_from, date_to\n  FROM pricing_recommendations\n  WHERE id = '{{ $json.q_rec_id }}'\n),\nupd AS (\n  UPDATE pricing_recommendations\n  SET status = 'approved', updated_at = now()\n  WHERE id = '{{ $json.q_rec_id }}' AND status IN ('draft', 'rejected')\n  RETURNING id, apartment_id, date_from, date_to, current_price, recommended_price\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status,\n     apartment_id, date_from, date_to, old_price, new_price,\n     reason, actor, source)\n  SELECT upd.id, 'approve', old_rec.status, 'approved',\n         upd.apartment_id, upd.date_from, upd.date_to,\n         upd.current_price, upd.recommended_price,\n         '{{ $json.q_reason }}', 'admin', 'admin_panel'\n  FROM upd, old_rec\n  WHERE (SELECT count(*) FROM upd) > 0\n  RETURNING id AS audit_id\n)\nSELECT\n  (SELECT count(*) FROM upd)::integer AS rows_updated,\n  (SELECT id FROM upd LIMIT 1)::text AS rec_id,\n  (SELECT audit_id FROM audit_ins LIMIT 1)::text AS audit_id,\n  (SELECT status FROM old_rec LIMIT 1) AS previous_status",
+        "options": {}
+      }
+    },
+    {
+      "id": "6f98d483-ed72-4fcf-96b1-79454fb02090",
+      "name": "Format Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1790
+      ],
+      "parameters": {
+        "jsCode": "\nconst row = $input.first().json;\nif (!row || row.rows_updated === 0 || row.rows_updated === '0') {\n  return [{ json: { ok: false, error: 'Recommendation not found or status is not draft/rejected', rows_updated: row.rows_updated } }];\n}\nreturn [{ json: { ok: true, action: 'pricing_recommendation_approve', rec_id: row.rec_id, audit_id: row.audit_id, previous_status: row.previous_status, new_status: 'approved' } }];\n"
+      }
+    },
+    {
+      "id": "93399a2d-d22a-4a24-82b4-2bf96bee2536",
+      "name": "Respond Approve",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        1790
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "176d05fe-b4a6-4809-b00b-ab61d463ad50",
+      "name": "If Reject",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        2040
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "12d93346-a31a-4d84-8bce-4843b229aa48",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_recommendation_reject",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "20573fcb-6c5e-4b65-87d4-56c435cbee57",
+      "name": "Prep Reject",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        1990
+      ],
+      "parameters": {
+        "jsCode": "\nconst body = ($('Webhook').first().json.body) || $input.first().json || {};\nconst rec_id = (body.recommendation_id || '').trim();\nconst reason = (body.reason || 'Отклонено владельцем').replace(/'/g, \"''\");\nif (!rec_id) {\n  return [{ json: { ok: false, error: 'recommendation_id is required' } }];\n}\nreturn [{ json: { q_rec_id: rec_id, q_reason: reason } }];\n"
+      }
+    },
+    {
+      "id": "c6ec2681-cf96-440a-ac27-5a8fcde4adbe",
+      "name": "Reject DB Exec",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        1990
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_postgres"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH old_rec AS (\n  SELECT id, status, current_price, recommended_price, apartment_id,\n         date_from, date_to\n  FROM pricing_recommendations\n  WHERE id = '{{ $json.q_rec_id }}'\n),\nupd AS (\n  UPDATE pricing_recommendations\n  SET status = 'rejected', updated_at = now()\n  WHERE id = '{{ $json.q_rec_id }}' AND status IN ('draft', 'approved')\n  RETURNING id, apartment_id, date_from, date_to, current_price, recommended_price\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status,\n     apartment_id, date_from, date_to, old_price, new_price,\n     reason, actor, source)\n  SELECT upd.id, 'reject', old_rec.status, 'rejected',\n         upd.apartment_id, upd.date_from, upd.date_to,\n         upd.current_price, upd.recommended_price,\n         '{{ $json.q_reason }}', 'admin', 'admin_panel'\n  FROM upd, old_rec\n  WHERE (SELECT count(*) FROM upd) > 0\n  RETURNING id AS audit_id\n)\nSELECT\n  (SELECT count(*) FROM upd)::integer AS rows_updated,\n  (SELECT id FROM upd LIMIT 1)::text AS rec_id,\n  (SELECT audit_id FROM audit_ins LIMIT 1)::text AS audit_id,\n  (SELECT status FROM old_rec LIMIT 1) AS previous_status",
+        "options": {}
+      }
+    },
+    {
+      "id": "b20a60ec-bd78-4ae6-a6d2-9a1c18428c9d",
+      "name": "Format Reject",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        1990
+      ],
+      "parameters": {
+        "jsCode": "\nconst row = $input.first().json;\nif (!row || row.rows_updated === 0 || row.rows_updated === '0') {\n  return [{ json: { ok: false, error: 'Recommendation not found or status is not draft/approved', rows_updated: row.rows_updated } }];\n}\nreturn [{ json: { ok: true, action: 'pricing_recommendation_reject', rec_id: row.rec_id, audit_id: row.audit_id, previous_status: row.previous_status, new_status: 'rejected' } }];\n"
+      }
+    },
+    {
+      "id": "8cf12083-0346-4d34-8819-5221aeed7b8f",
+      "name": "Respond Reject",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        1990
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "f74b0daf-4eeb-493e-91c1-898ed9220c4f",
+      "name": "If Audit Log",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        2240
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c44f7416-45b9-4a5c-b9b8-f303f9b391e5",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "pricing_action_audit_log",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "5199014b-ff4e-4e96-b96e-b1f9e07319fb",
+      "name": "Audit Log Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1100,
+        2190
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "gelendzhik_postgres"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'id', al.id::text,\n        'recommendation_id', al.recommendation_id::text,\n        'action', al.action,\n        'previous_status', al.previous_status,\n        'new_status', al.new_status,\n        'apartment_id', al.apartment_id,\n        'date_from', to_char(al.date_from, 'YYYY-MM-DD'),\n        'date_to', to_char(al.date_to, 'YYYY-MM-DD'),\n        'old_price', al.old_price::float,\n        'new_price', al.new_price::float,\n        'reason', al.reason,\n        'actor', al.actor,\n        'source', al.source,\n        'created_at', to_char(al.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')\n      )\n      ORDER BY al.created_at DESC\n    ),\n    '[]'::json\n  ) AS audit_data,\n  COUNT(*)::integer AS total\nFROM (\n  SELECT * FROM pricing_action_audit_log\n  ORDER BY created_at DESC LIMIT 50\n) al",
+        "options": {}
+      }
+    },
+    {
+      "id": "7686f4ca-0223-4f0a-827a-6b691fa85ec3",
+      "name": "Format Audit Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        2190
+      ],
+      "parameters": {
+        "jsCode": "\nconst row = $input.first().json;\nconst data = Array.isArray(row.audit_data) ? row.audit_data : [];\nreturn [{ json: { ok: true, action: 'pricing_action_audit_log', count: data.length, data: data } }];\n"
+      }
+    },
+    {
+      "id": "55bb51f8-a897-4783-9e05-42eb1f994179",
+      "name": "Respond Audit Log",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        2190
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -1401,7 +1667,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Approve",
             "type": "main",
             "index": 0
           }
@@ -1424,6 +1690,148 @@
         [
           {
             "node": "Respond Competitor Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Approve": {
+      "main": [
+        [
+          {
+            "node": "Prep Approve",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Approve": {
+      "main": [
+        [
+          {
+            "node": "Approve DB Exec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approve DB Exec": {
+      "main": [
+        [
+          {
+            "node": "Format Approve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Approve": {
+      "main": [
+        [
+          {
+            "node": "Respond Approve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Reject": {
+      "main": [
+        [
+          {
+            "node": "Prep Reject",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Reject": {
+      "main": [
+        [
+          {
+            "node": "Reject DB Exec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject DB Exec": {
+      "main": [
+        [
+          {
+            "node": "Format Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Reject": {
+      "main": [
+        [
+          {
+            "node": "Respond Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Audit Log Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Log Query": {
+      "main": [
+        [
+          {
+            "node": "Format Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Respond Audit Log",
             "type": "main",
             "index": 0
           }
