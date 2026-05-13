@@ -183,6 +183,35 @@ export type RevenueData = {
   summary: RevenueSummary;
 };
 
+export type MarketHistoryEntry = {
+  obs_date: string;
+  count: number;
+  fresh_count: number;
+  stale_count: number;
+  min_price: number | null;
+  median_price: number | null;
+  avg_price: number | null;
+  max_price: number | null;
+};
+
+export type MarketHistoryData = {
+  ok: boolean;
+  count: number;
+  total_observations: number;
+  total_fresh: number;
+  total_stale: number;
+  latest_obs_date: string | null;
+  data: MarketHistoryEntry[];
+};
+
+export type AddObservationInput = {
+  competitor_source_id: string;
+  stay_date_from: string;
+  stay_date_to: string;
+  price_per_night: number;
+  notes?: string;
+};
+
 export type AddCompetitorPriceInput = {
   source: string;
   title: string;
@@ -257,6 +286,34 @@ export async function fetchAuditLog(): Promise<AuditLogEntry[]> {
   if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
   const raw = body?.data ?? body ?? [];
   return Array.isArray(raw) ? raw : [];
+}
+
+export async function fetchMarketHistory(): Promise<MarketHistoryData> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "market_history" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as MarketHistoryData;
+}
+
+export async function addCompetitorObservation(
+  input: AddObservationInput,
+): Promise<{ ok: boolean; obs_id: string; message: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "add_competitor_observation", ...input })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || (body && body.ok === false)) {
+    throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  }
+  return body;
 }
 
 export async function addCompetitorPrice(

@@ -1,0 +1,308 @@
+{
+  "name": "02 — Owner Bot (Voice + Ollama)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": true
+        }
+      },
+      "id": "t1",
+      "name": "TelegramTrigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ !!$json.message.voice }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "s1",
+      "name": "Is Voice?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gelendzhik-whisper:9000/asr",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "task",
+              "value": "transcribe"
+            },
+            {
+              "name": "language",
+              "value": "ru"
+            },
+            {
+              "name": "output",
+              "value": "json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "audio_file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w1",
+      "name": "Whisper STT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        550,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Нормализация: text vs voice. Whisper мог не выполняться.\nconst trig = $(\"TelegramTrigger\").item.json;\nconst msg  = trig.message || {};\nconst telegramText = msg.text || msg.caption || \"\";\nlet whisperText = \"\";\ntry { whisperText = ($json && $json.text) || \"\"; } catch (e) {}\nconst inputText = (whisperText && whisperText.trim()) ? whisperText : telegramText;\nreturn [{ json: { input_text: inputText, chat_id: msg.chat && msg.chat.id, is_voice: !!msg.voice } }];"
+      },
+      "id": "norm1",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "id": "cl1",
+      "name": "Polza AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1050,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://polza.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"anthropic/claude-haiku-4.5\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 350,\n  \"stream\": false,\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"Ты — ИИ-помощник владельца гостевого дома в Геленджике. Отвечай строго по-русски, кратко, по делу. Помогай с бронированиями, гостями, ценами, календарём, бытовыми вопросами и управленческими решениями. Используй только факты из CONTEXT. Если в CONTEXT нет данных о занятости, не утверждай, что номер свободен или занят. Для вопросов о наличии мест дай аккуратный шаблон ответа гостю и предложи уточнить даты, количество гостей и срок проживания. Не выдумывай свободные даты, цены, брони, номера и ID. Если факта в CONTEXT нет — честно скажи об этом.\" },\n    { \"role\": \"user\",   \"content\": {{ JSON.stringify(\"CONTEXT:\\n\" + $json.context_text + \"\\n\\nВОПРОС ПОЛЬЗОВАТЕЛЯ:\\n\" + $json.input_text) }} }\n  ]\n}",
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "polza_header_auth",
+          "name": "Polza Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "id": "r1",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot"
+        }
+      }
+    },
+    {
+      "id": "compose1",
+      "name": "Compose Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Берём ответ Polza/OpenAI-compatible если есть, иначе fallback\nconst chatId = $(\"Normalize Input\").item.json.chat_id;\nlet text = \"\";\ntry {\n  const j = $json;\n  // OpenAI-compatible shape\n  const c1 = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;\n  if (typeof c1 === 'string' && c1.trim()) text = c1.trim();\n  // Legacy Ollama shape (на случай если кто-то вернёт старый формат)\n  if (!text) {\n    const c2 = j && j.message && j.message.content;\n    if (typeof c2 === 'string' && c2.trim()) text = c2.trim();\n  }\n} catch (e) {}\nif (!text) {\n  text = 'Бот получил сообщение, но AI-модуль временно не подключен.';\n}\nreturn [{ json: { chat_id: chatId, text } }];"
+      }
+    },
+    {
+      "id": "load_apts_1",
+      "name": "Load Apartments",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, max_guests, rooms, base_price, COALESCE(description,'') AS description FROM apartments WHERE active = TRUE ORDER BY id;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "build_ctx_1",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Собираем CONTEXT-блок для Polza AI на основе apartments + честно про занятость\nconst today = new Date();\nconst isoDate = today.toISOString().slice(0,10);\nlet apts = [];\ntry {\n  apts = $input.all().map(i => i.json).filter(Boolean);\n} catch (e) { apts = []; }\n\nlet lines = [];\nlines.push('СЕГОДНЯ: ' + isoDate);\nif (apts.length > 0) {\n  lines.push('ОБЪЕКТЫ ДОМА (источник: PostgreSQL apartments, актуально):');\n  for (const a of apts) {\n    const desc = (a.description && String(a.description).trim()) ? ' ' + String(a.description).trim() : '';\n    lines.push('- ' + a.name + ': до ' + a.max_guests + ' гостей, ' + a.rooms + ' комн., базовая цена ' + a.base_price + ' ₽.' + desc);\n  }\n} else {\n  lines.push('ОБЪЕКТЫ ДОМА: справочник apartments сейчас недоступен.');\n}\nlines.push('');\nlines.push('ДАННЫЕ ЗАНЯТОСТИ:');\nlines.push('Сейчас в workflow 02 не подключён источник фактической занятости. Таблицы bookings/availability_cache не используются в этом ответе. Не утверждай, что номер свободен или занят, если этих фактов нет.');\n\nconst context_text = lines.join('\\n');\nconst norm = $('Normalize Input').item.json;\nreturn [{ json: { context_text, input_text: norm.input_text, chat_id: norm.chat_id, is_voice: !!norm.is_voice } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Is Voice?": {
+      "main": [
+        [
+          {
+            "node": "Whisper STT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper STT": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Load Apartments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TelegramTrigger": {
+      "main": [
+        [
+          {
+            "node": "Is Voice?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Polza AI": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Apartments": {
+      "main": [
+        [
+          {
+            "node": "Build Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Context": {
+      "main": [
+        [
+          {
+            "node": "Polza AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "c9a5874f34e45e4d"
+}

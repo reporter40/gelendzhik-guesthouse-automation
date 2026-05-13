@@ -16,17 +16,32 @@
           ]
         }
       },
-      "position": [100, 300]
+      "position": [
+        100,
+        300
+      ]
     },
     {
-      "id": "s1",
-      "name": "Apartments",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "load_apts_1",
+      "name": "Load Apartments For Sync",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        320,
+        300
+      ],
+      "executeOnce": true,
       "parameters": {
-        "jsCode": "return [{\"id\":\"40\",\"lot\":\"302043\",\"name\":\"Номер 40\",\"base_price\":4000},{\"id\":\"41\",\"lot\":\"302052\",\"name\":\"Номер 41\",\"base_price\":4500},{\"id\":\"42\",\"lot\":\"310322\",\"name\":\"Номер 42\",\"base_price\":4500},{\"id\":\"50\",\"lot\":\"310313\",\"name\":\"Номер 50\",\"base_price\":7000}].map(a=>({json:a}));"
+        "operation": "executeQuery",
+        "query": "SELECT id, lot_id AS lot, name, ical_url, base_price FROM apartments WHERE active = TRUE AND ical_url IS NOT NULL ORDER BY id;",
+        "options": {}
       },
-      "position": [300, 300]
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     },
     {
       "id": "f1",
@@ -35,7 +50,7 @@
       "typeVersion": 4.2,
       "parameters": {
         "method": "GET",
-        "url": "=https://realtycalendar.ru/ical/{{ $json.lot }}.ics",
+        "url": "={{ $json.ical_url }}",
         "options": {
           "response": {
             "response": {
@@ -45,7 +60,10 @@
           "timeout": 30000
         }
       },
-      "position": [500, 300],
+      "position": [
+        500,
+        300
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -54,9 +72,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "parameters": {
-        "jsCode": "const apt=$('Apartments').item.json;const t=$input.first().json.data||'';if(!t||t.length<20)return[{json:{events:[],count:0,apartment_id:apt.id}}];const l=t.split('\\n'),e=[];let c={};for(const x of l){const s=x.trim();if(s==='BEGIN:VEVENT')c={};if(s.startsWith('DTSTART'))c.start=s.split(':').pop().substring(0,8);if(s.startsWith('DTEND'))c.end=s.split(':').pop().substring(0,8);if(s.startsWith('SUMMARY'))c.summary=s.split(':').slice(1).join(':');if(s==='END:VEVENT'&&c.start)e.push({...c,apartment_id:apt.id})}return[{json:{events:e,count:e.length,apartment_id:apt.id}}];"
+        "jsCode": "// Run Once for All Items: пара (apartment, fetched_text) по индексу\nfunction toIso(s){\n  return s && s.length === 8\n    ? s.slice(0,4) + '-' + s.slice(4,6) + '-' + s.slice(6,8)\n    : s;\n}\nconst apts    = $('Load Apartments For Sync').all().map(i => i.json);\nconst fetched = $input.all().map(i => i.json);\nconst out = [];\nfor (let k = 0; k < fetched.length; k++) {\n  const apt = apts[k] || {};\n  const text = (fetched[k] && fetched[k].data) || '';\n  const aId = String(apt.id || '');\n  const aName = String(apt.name || '');\n  const lot = String(apt.lot || '');\n  const events = [];\n  if (text && text.length >= 20) {\n    let cur = {};\n    for (const line of text.split('\\n')) {\n      const s = line.trim();\n      if (s === 'BEGIN:VEVENT') cur = {};\n      else if (s.startsWith('DTSTART')) cur.start = toIso(s.split(':').pop().substring(0,8));\n      else if (s.startsWith('DTEND'))   cur.end   = toIso(s.split(':').pop().substring(0,8));\n      else if (s.startsWith('SUMMARY')) cur.summary = s.split(':').slice(1).join(':');\n      else if (s === 'END:VEVENT' && cur.start && cur.end) {\n        events.push({ ...cur, apartment_id: aId, apartment_name: aName, lot_id: lot });\n      }\n    }\n  }\n  out.push({ json: { events, count: events.length, apartment_id: aId, apartment_name: aName, lot_id: lot } });\n}\nreturn out;",
+        "mode": "runOnceForAllItems"
       },
-      "position": [700, 300]
+      "position": [
+        700,
+        300
+      ]
     },
     {
       "id": "ex1",
@@ -64,9 +86,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "parameters": {
-        "jsCode": "const item=$input.first().json;if(!item.events||item.events.length===0)return[];return item.events.map(ev=>({json:ev}));"
+        "jsCode": "// Run Once for All Items: разворачиваем events всех 4 квартир и дедуплицируем по id\nconst seen = new Map();\nfor (const it of $input.all()) {\n  const events = (it.json && it.json.events) || [];\n  for (const ev of events) {\n    const key = String(ev.apartment_id) + '-' + ev.start;\n    seen.set(key, ev); // последний выигрывает\n  }\n}\nreturn Array.from(seen.values()).map(ev => ({ json: ev }));",
+        "mode": "runOnceForAllItems"
       },
-      "position": [900, 300]
+      "position": [
+        900,
+        300
+      ]
     },
     {
       "id": "db1",
@@ -74,37 +100,18 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "parameters": {
-        "operation": "insert",
-        "schema": {
-          "__rl": true,
-          "value": "public",
-          "mode": "list"
-        },
-        "table": {
-          "__rl": true,
-          "value": "bookings",
-          "mode": "list"
-        },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "rc_id": "={{ $json.apartment_id + '-' + $json.start }}",
-            "apartment_id": "={{ $json.apartment_id }}",
-            "checkin_date": "={{ $json.start }}",
-            "checkout_date": "={{ $json.end }}",
-            "summary": "={{ $json.summary || 'Бронирование' }}",
-            "status": "confirmed"
-          }
-        },
-        "options": {
-          "conflictTarget": "rc_id",
-          "updateColumns": ["checkin_date", "checkout_date", "status"]
-        }
+        "operation": "executeQuery",
+        "query": "INSERT INTO bookings (id, apartment_id, apartment_name, checkin_at, checkout_at, notes, source, status, updated_at)\nVALUES (\n  '{{ $json.apartment_id }}-{{ $json.start }}',\n  '{{ $json.apartment_id }}',\n  '{{ ($json.apartment_name || '').replace(/\\'/g, \"''\") }}',\n  '{{ $json.start }}'::date,\n  '{{ $json.end }}'::date,\n  '{{ (($json.summary || '').toString().trim() || 'iCal RealtyCalendar').replace(/\\'/g, \"''\") }}',\n  'realtycalendar-ical',\n  'confirmed',\n  NOW()\n)\nON CONFLICT (id) DO UPDATE SET\n  apartment_id   = EXCLUDED.apartment_id,\n  apartment_name = EXCLUDED.apartment_name,\n  checkin_at     = EXCLUDED.checkin_at,\n  checkout_at    = EXCLUDED.checkout_at,\n  notes          = EXCLUDED.notes,\n  source         = EXCLUDED.source,\n  status         = EXCLUDED.status,\n  updated_at     = NOW();",
+        "options": {}
       },
-      "position": [1100, 300],
+      "position": [
+        1100,
+        300
+      ],
       "credentials": {
         "postgres": {
-          "id": "gelendzhik_db"
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
         }
       },
       "onError": "continueRegularOutput"
@@ -112,27 +119,71 @@
   ],
   "connections": {
     "Every 30 Minutes": {
-      "main": [[{"node": "Apartments", "type": "main", "index": 0}]]
-    },
-    "Apartments": {
-      "main": [[{"node": "Fetch iCal", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Load Apartments For Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Fetch iCal": {
-      "main": [[{"node": "Parse", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Parse": {
-      "main": [[{"node": "Expand Events", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Expand Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Expand Events": {
-      "main": [[{"node": "Upsert Booking", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Upsert Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Apartments For Sync": {
+      "main": [
+        [
+          {
+            "node": "Fetch iCal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1"
   },
   "tags": [
-    {"name": "ical"},
-    {"name": "sync"}
+    {
+      "name": "ical"
+    },
+    {
+      "name": "sync"
+    }
   ],
   "id": "4a846531ec22acc6"
 }

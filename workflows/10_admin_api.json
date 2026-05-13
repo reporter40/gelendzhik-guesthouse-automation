@@ -50,7 +50,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
+        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log', 'market_history', 'add_competitor_observation',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
       }
     },
     {
@@ -741,13 +741,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  cpo.id, cs.name AS competitor_name, cs.similarity_score,\n  cs.source_platform, cs.url AS competitor_url,\n  cpo.observed_at, cpo.stay_date_from, cpo.stay_date_to, cpo.nights,\n  cpo.price_per_night, cpo.total_price, cpo.min_stay,\n  cpo.availability_status, cpo.confidence,\n  cpo.collection_method, cpo.notes,\n  cpo.created_at\nFROM competitor_price_observations cpo\nJOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\nORDER BY cpo.observed_at DESC\nLIMIT 50",
+        "query": "{{ $json.obs_query }}",
         "additionalFields": {}
       },
       "id": "pg-competitor-obs-c15",
       "name": "Competitor Observations Query",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
+      "typeVersion": 2.5,
       "position": [
         1100,
         1330
@@ -1242,6 +1242,215 @@
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {}
       }
+    },
+    {
+      "id": "prep-obs-filter",
+      "name": "Prep Obs Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        1200
+      ],
+      "parameters": {
+        "jsCode": "\nconst body = $('Webhook').first().json.body || {};\nconst srcId   = (body.competitor_source_id || '').trim().replace(/'/g, \"''\");\nconst dtFrom  = (body.date_from || '').trim().replace(/'/g, \"''\");\nconst dtTo    = (body.date_to   || '').trim().replace(/'/g, \"''\");\nconst lim     = parseInt(body.limit) > 0 && parseInt(body.limit) <= 200 ? parseInt(body.limit) : 50;\nconst latestOnly = body.latest_only === true || body.latest_only === 'true';\n\nconst where = [];\nif (srcId) where.push(`cpo.competitor_source_id::text = '${srcId}'`);\nif (dtFrom) where.push(`cpo.stay_date_from >= '${dtFrom}'::date`);\nif (dtTo)   where.push(`cpo.stay_date_to   <= '${dtTo}'::date`);\nconst w = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';\n\nconst sel = `cpo.id::text AS id, cs.name AS competitor_name, cs.similarity_score,\n  cs.source_platform, cs.url AS competitor_url,\n  to_char(cpo.observed_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS observed_at,\n  to_char(cpo.stay_date_from,'YYYY-MM-DD') AS stay_date_from,\n  to_char(cpo.stay_date_to,  'YYYY-MM-DD') AS stay_date_to,\n  cpo.nights, cpo.price_per_night::float, cpo.confidence::float,\n  cpo.collection_method, cpo.notes,\n  to_char(cpo.created_at,'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS created_at`;\n\nlet sql;\nif (latestOnly) {\n  sql = `SELECT DISTINCT ON (cpo.competitor_source_id) ${sel}\nFROM competitor_price_observations cpo\nJOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n${w}\nORDER BY cpo.competitor_source_id, cpo.observed_at DESC`;\n} else {\n  sql = `SELECT ${sel}\nFROM competitor_price_observations cpo\nJOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n${w}\nORDER BY cpo.observed_at DESC\nLIMIT ${lim}`;\n}\n\nreturn [{ json: { obs_query: sql } }];\n"
+      }
+    },
+    {
+      "id": "if-market-history",
+      "name": "If Market History",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        2400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "mh-cond",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "market_history"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "market-history-query",
+      "name": "Market History Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3000,
+        2300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  to_char(observed_at::date, 'YYYY-MM-DD') AS obs_date,\n  COUNT(*)::integer AS count,\n  COUNT(*) FILTER (WHERE (NOW()-observed_at) <= INTERVAL '14 days')::integer AS fresh_count,\n  COUNT(*) FILTER (WHERE (NOW()-observed_at) > INTERVAL '14 days')::integer AS stale_count,\n  MIN(price_per_night)::float     AS min_price,\n  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night)::float AS median_price,\n  ROUND(AVG(price_per_night))::float  AS avg_price,\n  MAX(price_per_night)::float     AS max_price\nFROM competitor_price_observations\nWHERE price_per_night IS NOT NULL\nGROUP BY observed_at::date\nORDER BY observed_at::date DESC\nLIMIT 30",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "format-market-history",
+      "name": "Format Market History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        2300
+      ],
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\n// Overall freshness summary\nconst totalFresh = rows.reduce((s, r) => s + (r.fresh_count || 0), 0);\nconst totalStale = rows.reduce((s, r) => s + (r.stale_count || 0), 0);\nconst latestDate = rows.length > 0 ? rows[0].obs_date : null;\nreturn [{\n  json: {\n    ok: true,\n    action: 'market_history',\n    count: rows.length,\n    total_observations: rows.reduce((s, r) => s + (r.count || 0), 0),\n    total_fresh: totalFresh,\n    total_stale: totalStale,\n    latest_obs_date: latestDate,\n    data: rows\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "respond-market-history",
+      "name": "Respond Market History",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3400,
+        2300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-add-observation",
+      "name": "If Add Observation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        2600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ao-cond",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "add_competitor_observation"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prep-add-obs",
+      "name": "Prep Add Observation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        2500
+      ],
+      "parameters": {
+        "jsCode": "\nconst body = $('Webhook').first().json.body || {};\nconst srcId  = (body.competitor_source_id || '').trim().replace(/'/g, \"''\");\nconst dtFrom = (body.stay_date_from || '').trim().replace(/'/g, \"''\");\nconst dtTo   = (body.stay_date_to   || '').trim().replace(/'/g, \"''\");\nconst price  = parseFloat(body.price_per_night);\nconst notes  = (body.notes || '').replace(/'/g, \"''\").trim();\n\nif (!srcId || !dtFrom || !dtTo || !price || price <= 0) {\n  const msg = !srcId ? 'competitor_source_id required'\n    : !dtFrom ? 'stay_date_from required'\n    : !dtTo   ? 'stay_date_to required'\n    : 'price_per_night must be > 0';\n  return [{ json: { obs_sql: null, err: msg } }];\n}\n\nconst notesExpr = notes ? `'${notes}'` : 'NULL';\n\nconst sql = `INSERT INTO competitor_price_observations\n  (competitor_source_id, stay_date_from, stay_date_to,\n   price_per_night, collection_method, confidence, notes, observed_at)\nVALUES (\n  '${srcId}'::uuid,\n  '${dtFrom}'::date,\n  '${dtTo}'::date,\n  ${price},\n  'manual_input',\n  0.7,\n  ${notesExpr},\n  NOW()\n)\nRETURNING id::text AS obs_id`;\n\nreturn [{ json: { obs_sql: sql, err: null } }];\n"
+      }
+    },
+    {
+      "id": "obs-db-insert",
+      "name": "Observation DB Insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3200,
+        2500
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.obs_sql }}",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "format-add-obs",
+      "name": "Format Add Observation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        2500
+      ],
+      "parameters": {
+        "jsCode": "\nconst prep = $('Prep Add Observation').first().json;\nif (prep.err) {\n  return [{ json: { ok: false, error: prep.err } }];\n}\nconst r = $input.first().json;\nif (!r || !r.obs_id) {\n  return [{ json: { ok: false, error: 'insert_failed' } }];\n}\nreturn [{ json: { ok: true, action: 'add_competitor_observation', obs_id: r.obs_id, message: 'Наблюдение добавлено' } }];\n"
+      }
+    },
+    {
+      "id": "respond-add-obs",
+      "name": "Respond Add Observation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3600,
+        2500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "respond-obs-err",
+      "name": "Respond Obs Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        2700
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
     }
   ],
   "connections": {
@@ -1580,7 +1789,7 @@
       "main": [
         [
           {
-            "node": "Competitor Observations Query",
+            "node": "Prep Obs Filter",
             "type": "main",
             "index": 0
           }
@@ -1809,7 +2018,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Market History",
             "type": "main",
             "index": 0
           }
@@ -1832,6 +2041,108 @@
         [
           {
             "node": "Respond Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Obs Filter": {
+      "main": [
+        [
+          {
+            "node": "Competitor Observations Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Market History": {
+      "main": [
+        [
+          {
+            "node": "Market History Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Add Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Market History Query": {
+      "main": [
+        [
+          {
+            "node": "Format Market History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Market History": {
+      "main": [
+        [
+          {
+            "node": "Respond Market History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Add Observation": {
+      "main": [
+        [
+          {
+            "node": "Prep Add Observation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Add Observation": {
+      "main": [
+        [
+          {
+            "node": "Observation DB Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Observation DB Insert": {
+      "main": [
+        [
+          {
+            "node": "Format Add Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Add Observation": {
+      "main": [
+        [
+          {
+            "node": "Respond Add Observation",
             "type": "main",
             "index": 0
           }

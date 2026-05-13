@@ -38,6 +38,7 @@ sudo infrastructure/setup.sh
 - `marketing/`: Шаблоны постов, виджет бронирования
 - `docs/`: Документация
 - `client_onboarding/`: Пакет тиражирования для клиентов
+- `admin/`: Next.js web-админка (read-only к Admin API; деплой **только под нужным Vercel team** — см. `admin/VERCEL.md`)
 
 ## Стек
 | Компонент | Технология | Лицензия | Стоимость |

@@ -1,3 +1,6 @@
+# Vercel local link (может появиться при vercel из разных директорий)
+.vercel
+
 # Secrets
 .env
 *.env.local

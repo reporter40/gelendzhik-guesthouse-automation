@@ -1,6 +1,12 @@
 "use server";
 
-import { addCompetitorPrice, approveRecommendation, rejectRecommendation, AdminApiError } from "@/lib/adminApi";
+import {
+  addCompetitorPrice,
+  addCompetitorObservation,
+  approveRecommendation,
+  rejectRecommendation,
+  AdminApiError,
+} from "@/lib/adminApi";
 import { requireAuth } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 
@@ -52,6 +58,33 @@ export async function addCompetitorPriceAction(
   } catch (e) {
     const msg = e instanceof AdminApiError ? e.message : "Ошибка сохранения";
     return { ok: false, error: msg };
+  }
+}
+
+export async function addObservationAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAuth();
+
+  const srcId   = formData.get("competitor_source_id")?.toString().trim() ?? "";
+  const dtFrom  = formData.get("stay_date_from")?.toString() ?? "";
+  const dtTo    = formData.get("stay_date_to")?.toString() ?? "";
+  const price   = Number(formData.get("price_per_night"));
+  const notes   = formData.get("notes")?.toString().trim() || undefined;
+
+  if (!srcId || !dtFrom || !dtTo || !price) {
+    return { ok: false, error: "Заполни обязательные поля: конкурент, даты, цена" };
+  }
+  if (price <= 0) return { ok: false, error: "Цена должна быть больше 0" };
+  if (dtTo < dtFrom) return { ok: false, error: "Дата окончания не может быть раньше даты начала" };
+
+  try {
+    const result = await addCompetitorObservation({ competitor_source_id: srcId, stay_date_from: dtFrom, stay_date_to: dtTo, price_per_night: price, notes });
+    revalidatePath("/revenue");
+    return { ok: true, message: result.message ?? "Наблюдение добавлено" };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка сохранения" };
   }
 }
 

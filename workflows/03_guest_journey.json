@@ -2,6 +2,14 @@
   "name": "03 — Guest Journey (Automated Touchpoints)",
   "nodes": [
     {
+      "id": "t1",
+      "name": "Hourly Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        300
+      ],
       "parameters": {
         "rule": {
           "interval": [
@@ -11,79 +19,335 @@
             }
           ]
         }
-      },
-      "id": "t1",
-      "name": "Hourly Check",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [100, 300]
+      }
     },
     {
+      "id": "lo1",
+      "name": "Load Owner Chat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        300,
+        200
+      ],
+      "executeOnce": true,
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT * FROM bookings WHERE status = 'confirmed';"
+        "query": "SELECT value FROM system_vars WHERE key='owner_chat_id' LIMIT 1;",
+        "options": {}
       },
-      "id": "db1",
-      "name": "Get Bookings",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 1,
-      "position": [300, 300],
       "credentials": {
         "postgres": {
-          "id": "gelendzhik_db"
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
         }
       }
     },
     {
+      "id": "gb1",
+      "name": "Get Bookings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        500,
+        300
+      ],
+      "executeOnce": true,
       "parameters": {
-        "jsCode": "const now = new Date();\nreturn $input.all().map(item => {\n  const checkin = new Date(item.json.checkin_date);\n  const daysTo = Math.ceil((checkin - now) / 86400000);\n  item.json.days_to_checkin = daysTo;\n  return item;\n});"
+        "operation": "executeQuery",
+        "query": "SELECT id, apartment_id, COALESCE(apartment_name,'') AS apartment_name,   COALESCE(guest_name,'')  AS guest_name,   COALESCE(guest_phone,'') AS guest_phone,   COALESCE(guest_email,'') AS guest_email,   guest_chat_id, guest_telegram_id,   COALESCE(guest_username,'')   AS guest_username,   COALESCE(guest_first_name,'') AS guest_first_name,   COALESCE(guest_last_name,'')  AS guest_last_name,   guest_opt_in_at,   to_char(checkin_at,'YYYY-MM-DD')  AS checkin_at,   to_char(checkout_at,'YYYY-MM-DD') AS checkout_at,   status, source,   COALESCE(journey_sent,'{}'::jsonb) AS journey_sent,   COALESCE(notes,'') AS notes FROM bookings WHERE status='confirmed'   AND checkout_at >= CURRENT_DATE - INTERVAL '2 days'   AND checkin_at  <= CURRENT_DATE + INTERVAL '14 days' ORDER BY checkin_at, apartment_id;",
+        "options": {}
       },
-      "id": "c1",
-      "name": "Calculate Days",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [500, 300]
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
     },
     {
+      "id": "ct1",
+      "name": "Calculate Touchpoints",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
       "parameters": {
-        "jsCode": "const MESSAGES = {\n  7: '👋 Добрый день! Через 7 дней вас ждёт заезд в наш гостевой дом в Геленджике. Будем рады встретить вас! 🏠\\n\\nЕсли есть вопросы — пишите в любое время.',\n  3: '😊 Через 3 дня — ваш заезд! Готовим всё для комфортного отдыха.\\n\\nНапомним: заезд с 14:00, выезд до 12:00. Нужна трансфер или помощь с дорогой — спрашивайте!',\n  1: '🔑 Завтра ваш день заезда! Ждём вас с 14:00.\\n\\nНапишите нам, когда будете подъезжать — встретим и покажем всё лично. До завтра! 👋',\n  0: '🎉 Добро пожаловать! Сегодня ваш заезд. Ждём с 14:00.\\n\\nЕсли уже добрались — напишите, выйдем встречать!'\n};\n\nreturn $input.all()\n  .filter(item => {\n    const d = item.json.days_to_checkin;\n    return MESSAGES[d] !== undefined && item.json.guest_chat_id;\n  })\n  .map(item => ({\n    json: {\n      ...item.json,\n      message_text: MESSAGES[item.json.days_to_checkin]\n    }\n  }));"
-      },
-      "id": "msg1",
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Phase B1..B5: D-1 заезд, D-0 morning, D-0 evening, D-1 выезд, D+1 review могут идти гостю; иначе владельцу.\nfunction dayDiff(dateStrYmd, today){\n  const d = new Date(dateStrYmd + 'T00:00:00Z');\n  const t = new Date(today.toISOString().slice(0,10) + 'T00:00:00Z');\n  return Math.round((d - t) / 86400000);\n}\nconst today = new Date();\nconst out = [];\nfor (const it of $input.all()) {\n  const b = it.json;\n  if (!b || !b.id) continue;\n  const ci = String(b.checkin_at  || '').slice(0,10);\n  const co = String(b.checkout_at || '').slice(0,10);\n  if (ci.length < 10 || co.length < 10) continue;\n  const dCi = dayDiff(ci, today);\n  const dCo = dayDiff(co, today);\n  let sent = b.journey_sent;\n  if (typeof sent === 'string') { try { sent = JSON.parse(sent); } catch(e){ sent={}; } }\n  if (!sent || typeof sent !== 'object') sent = {};\n  const hasGuest = b.guest_chat_id !== null && b.guest_chat_id !== undefined && b.guest_chat_id !== '';\n  const evs = [];\n  // === D-1 заезд (B1) ===\n  if (dCi === 1) {\n    if (hasGuest && !sent['guest_d_minus_1_checkin']) {\n      evs.push({ event_key: 'guest_d_minus_1_checkin', channel: 'guest', chat_id: Number(b.guest_chat_id) });\n    } else if (!hasGuest && !sent['owner_d_minus_1_checkin']) {\n      evs.push({ event_key: 'owner_d_minus_1_checkin', channel: 'owner', chat_id: null });\n    }\n  }\n  // === D-0 morning (B2) ===\n  if (dCi === 0) {\n    if (hasGuest && !sent['guest_d_0_morning_checkin']) {\n      evs.push({ event_key: 'guest_d_0_morning_checkin', channel: 'guest', chat_id: Number(b.guest_chat_id) });\n    } else if (!hasGuest && !sent['owner_d_0_morning_checkin']) {\n      evs.push({ event_key: 'owner_d_0_morning_checkin', channel: 'owner', chat_id: null });\n    }\n    // === D-0 evening (B3) ===\n    if (hasGuest && !sent['guest_d_0_evening_checkin']) {\n      evs.push({ event_key: 'guest_d_0_evening_checkin', channel: 'guest', chat_id: Number(b.guest_chat_id) });\n    } else if (!hasGuest && !sent['owner_d_0_evening_checkin']) {\n      evs.push({ event_key: 'owner_d_0_evening_checkin', channel: 'owner', chat_id: null });\n    }\n  }\n  // === D-1 выезд (B4) ===\n  if (dCo === 1) {\n    if (hasGuest && !sent['guest_d_minus_1_checkout']) {\n      evs.push({ event_key: 'guest_d_minus_1_checkout', channel: 'guest', chat_id: Number(b.guest_chat_id) });\n    } else if (!hasGuest && !sent['owner_d_minus_1_checkout']) {\n      evs.push({ event_key: 'owner_d_minus_1_checkout', channel: 'owner', chat_id: null });\n    }\n  }\n  // === D+1 review (Phase B5) — guest first, иначе owner ===\n  if (dCo === -1) {\n    if (hasGuest && !sent['guest_d_plus_1_review']) {\n      evs.push({ event_key: 'guest_d_plus_1_review', channel: 'guest', chat_id: Number(b.guest_chat_id) });\n    } else if (!hasGuest && !sent['owner_d_plus_1_review']) {\n      evs.push({ event_key: 'owner_d_plus_1_review', channel: 'owner', chat_id: null });\n    }\n  }\n  for (const e of evs) {\n    out.push({ json: {\n      booking_id: String(b.id),\n      event_key: e.event_key,\n      channel: e.channel,\n      chat_id: e.chat_id,\n      apartment_id:   String(b.apartment_id),\n      apartment_name: String(b.apartment_name || ''),\n      checkin_at:     ci,\n      checkout_at:    co,\n      source:         String(b.source || ''),\n      guest_name:     String(b.guest_name || ''),\n      guest_first_name: String(b.guest_first_name || ''),\n      guest_username:   String(b.guest_username || ''),\n      d_ci: dCi, d_co: dCo\n    } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "sm1",
       "name": "Select Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 300]
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $json;\nconst HOMERESERVE_URL = 'https://homereserve.ru/m66FXMW0XO/list-preview';\n\nconst apt         = '№' + j.apartment_id + (j.apartment_name ? ' (' + j.apartment_name + ')' : '');\nconst dates       = j.checkin_at + ' → ' + j.checkout_at;\nconst src         = j.source || 'не указан';\nconst guest       = (j.guest_name && j.guest_name.trim()) ? j.guest_name : 'гость не указан';\nconst guestFirst  = (j.guest_first_name && j.guest_first_name.trim()) ? j.guest_first_name : '';\nconst guestUsername = j.guest_username ? '@' + j.guest_username : '';\n\n// render() — substitutes {{placeholder}} with context values\nfunction render(body, ctx) {\n  return body\n    .replace(/\\{\\{guest_first_name\\}\\}/g,  ctx.guest_first_name)\n    .replace(/\\{\\{apartment_id\\}\\}/g,       ctx.apartment_id)\n    .replace(/\\{\\{apartment_name\\}\\}/g,     ctx.apartment_name)\n    .replace(/\\{\\{checkin_at\\}\\}/g,         ctx.checkin_at)\n    .replace(/\\{\\{checkout_at\\}\\}/g,        ctx.checkout_at)\n    .replace(/\\{\\{guest_name\\}\\}/g,         ctx.guest_name)\n    .replace(/\\{\\{guest_username\\}\\}/g,     ctx.guest_username)\n    .replace(/\\{\\{booking_id\\}\\}/g,         ctx.booking_id)\n    .replace(/\\{\\{source\\}\\}/g,             ctx.source)\n    .replace(/\\{\\{homereserve_url\\}\\}/g,    ctx.homereserve_url)\n    .replace(/\\{\\{guest_chat_id\\}\\}/g,      ctx.guest_chat_id)\n    .trim();\n}\n\nconst ctx = {\n  guest_first_name: guestFirst ? ', ' + guestFirst : '',\n  apartment_id:     String(j.apartment_id),\n  apartment_name:   j.apartment_name ? ' (' + j.apartment_name + ')' : '',\n  checkin_at:       j.checkin_at,\n  checkout_at:      j.checkout_at,\n  guest_name:       guest,\n  guest_username:   guestUsername,\n  booking_id:       j.booking_id || j.id || '',\n  source:           src,\n  homereserve_url:  HOMERESERVE_URL,\n  guest_chat_id:    j.guest_chat_id ? String(j.guest_chat_id) : '',\n};\n\n// load templates map from Load Templates node (parallel branch)\nlet tplMap = {};\ntry {\n  const tplItems = $('Load Templates').all();\n  for (const item of tplItems) {\n    const t = item.json;\n    if (t && t.key && t.body) tplMap[t.key] = t.body;\n  }\n} catch (_e) {\n  // Load Templates node did not run or errored — fallback to hardcoded\n}\n\nfunction fromDB(key) {\n  if (tplMap[key]) return { text: render(tplMap[key], ctx), source: 'message_templates' };\n  return null;\n}\n\n// ── Hardcoded fallback ─────────────────────────────────────────────────────\nconst M = {\n  guest_d_minus_1_checkin:\n    'Здравствуйте' + (guestFirst ? ', ' + guestFirst : '') + '!\\n' +\n    'Завтра ваш заезд в Акваторинг.\\n\\n' +\n    'Бронь:\\nобъект ' + apt + '\\nдаты: ' + dates + '\\n\\n' +\n    'Заезд обычно с 14:00. Если время приезда меняется — напишите здесь, я передам владельцу.\\n\\n' +\n    'Ссылка для просмотра объекта и деталей:\\n' + HOMERESERVE_URL + '\\n\\nДо встречи!',\n  guest_d_0_morning_checkin:\n    'Доброе утро' + (guestFirst ? ', ' + guestFirst : '') + '!\\n' +\n    'Сегодня ваш заезд в Акваторинг.\\n\\n' +\n    'Бронь:\\nобъект ' + apt + '\\nдаты: ' + dates + '\\n\\n' +\n    'Заезд обычно с 14:00.\\n\\n' +\n    'Если время приезда меняется или нужен уточняющий вопрос по заселению — напишите здесь.\\n\\n' +\n    'Ссылка для просмотра объекта:\\n' + HOMERESERVE_URL + '\\n\\nДо встречи!',\n  guest_d_0_evening_checkin:\n    'Добрый вечер' + (guestFirst ? ', ' + guestFirst : '') + '! Надеюсь, вы хорошо заселились.\\n\\n' +\n    'Всё ли в порядке с номером?\\n' +\n    'Если что-то нужно — напишите здесь, я передам владельцу.\\n\\n' +\n    'Желаем приятного отдыха в Акваторинге!',\n  guest_d_minus_1_checkout:\n    'Здравствуйте' + (guestFirst ? ', ' + guestFirst : '') + '!\\n' +\n    'Напоминаю, что завтра день выезда из Акваторинга.\\n\\n' +\n    'Бронь:\\nобъект ' + apt + '\\nдаты: ' + dates + '\\n\\n' +\n    'Выезд обычно до 12:00.\\n\\n' +\n    'Если нужен поздний выезд или есть вопрос по завершению проживания — напишите здесь, я передам владельцу.\\n\\n' +\n    'Спасибо, что выбрали Акваторинг!',\n  guest_d_plus_1_review:\n    'Здравствуйте' + (guestFirst ? ', ' + guestFirst : '') + '! Спасибо, что выбрали Акваторинг.\\n\\n' +\n    'Надеемся, отдых прошёл хорошо.\\n\\n' +\n    'Если всё понравилось, будем благодарны за короткий отзыв — это очень помогает нам развивать гостевой дом.\\n\\n' +\n    'Если что-то было не так или остался вопрос — напишите здесь, я передам владельцу.\\n\\n' +\n    'Будем рады видеть вас снова!',\n  owner_d_minus_1_checkin:  'Завтра заезд: объект ' + apt + '. Даты: ' + dates + '. Источник: ' + src + '. Гость: ' + guest + '. Подготовить уборку, ключи, инструкции.',\n  owner_d_0_morning_checkin:'Сегодня заезд: объект ' + apt + '. Гость: ' + guest + '. Проверь готовность номера, ключи, связь с гостем и инструкцию по заселению.',\n  owner_d_0_evening_checkin:'Сегодня было заселение: объект ' + apt + '. Гость: ' + guest + '. Проверь, всё ли у гостей хорошо.',\n  owner_d_minus_1_checkout: 'Завтра выезд: объект ' + apt + ' до 12:00. Гость: ' + guest + '. Подготовить уборку и проверку номера.',\n  owner_d_plus_1_review:    'Вчера был выезд: объект ' + apt + '. Гость: ' + guest + '. Если есть контакт гостя — попросить отзыв и закрыть бытовые вопросы.'\n};\n\nconst ownerBriefMap = {\n  guest_d_minus_1_checkin:\n    'Гостю отправлено D-1 сообщение по брони ' + j.booking_id + ':\\n' +\n    'объект ' + apt + '\\nдаты ' + dates + '\\n' +\n    'Telegram: ' + (guestUsername || ('id ' + (j.chat_id || '—'))) + '\\nguest_chat_id: есть',\n  guest_d_0_morning_checkin:\n    'Гостю отправлено сообщение в день заезда по брони ' + j.booking_id + ':\\n' +\n    'объект ' + apt + '\\nдаты ' + dates + '\\n' +\n    'Telegram: ' + (guestUsername || ('id ' + (j.chat_id || '—'))) + '\\nguest_chat_id: есть',\n  guest_d_0_evening_checkin:\n    'Гостю отправлен вечерний check-in по брони ' + j.booking_id + ':\\n' +\n    'объект ' + apt + '\\nдаты ' + dates + '\\n' +\n    'Telegram: ' + (guestUsername || ('id ' + (j.chat_id || '—'))) + '\\nguest_chat_id: есть',\n  guest_d_minus_1_checkout:\n    'Гостю отправлено напоминание о завтрашнем выезде по брони ' + j.booking_id + ':\\n' +\n    'объект ' + apt + '\\nдаты ' + dates + '\\n' +\n    'Telegram: ' + (guestUsername || ('id ' + (j.chat_id || '—'))) + '\\nguest_chat_id: есть',\n  guest_d_plus_1_review:\n    'Гостю отправлена просьба об отзыве по брони ' + j.booking_id + ':\\n' +\n    'объект ' + apt + '\\nдаты ' + dates + '\\n' +\n    'Telegram: ' + (guestUsername || ('id ' + (j.chat_id || '—'))) + '\\nguest_chat_id: есть'\n};\n\n// ── Resolve main message ───────────────────────────────────────────────────\nlet messageText, templateSource;\nconst msgFromDB = fromDB(j.event_key);\nif (msgFromDB) {\n  messageText    = msgFromDB.text;\n  templateSource = msgFromDB.source;\n} else {\n  messageText    = M[j.event_key] || ('Touchpoint ' + j.event_key + ': ' + apt);\n  templateSource = 'fallback_hardcoded';\n}\n\n// ── Resolve owner brief ────────────────────────────────────────────────────\nlet ownerBriefText = '', ownerBriefSource = '';\nif (j.channel === 'guest') {\n  const briefKey = 'owner_brief_' + j.event_key + '_sent';\n  const briefFromDB = fromDB(briefKey);\n  if (briefFromDB) {\n    ownerBriefText  = briefFromDB.text;\n    ownerBriefSource = briefFromDB.source;\n  } else {\n    ownerBriefText   = ownerBriefMap[j.event_key] || '';\n    ownerBriefSource = 'fallback_hardcoded';\n  }\n}\n\nreturn { ...j, message_text: messageText, owner_brief_text: ownerBriefText, template_source: templateSource, owner_brief_source: ownerBriefSource };"
+      }
     },
     {
-      "parameters": {
-        "chatId": "={{ $json.guest_chat_id }}",
-        "text": "={{ $json.message_text }}",
-        "additionalFields": {}
-      },
-      "id": "r1",
-      "name": "Send Guest Bot",
+      "id": "so1",
+      "name": "Send Owner",
       "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
-      "position": [950, 300],
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "chatId": "={{ $('Load Owner Chat').item.json.value }}",
+        "text": "={{ $json.message_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
       "credentials": {
         "telegramApi": {
-          "id": "telegram_guest_bot"
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
         }
       }
+    },
+    {
+      "id": "ms1",
+      "name": "Mark Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1300,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE bookings\nSET journey_sent = COALESCE(journey_sent,'{}'::jsonb)   || jsonb_build_object('{{ $(\"Select Message\").item.json.event_key }}', NOW()::text),\n    updated_at = NOW()\nWHERE id = '{{ $(\"Select Message\").item.json.booking_id }}';",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "ifch01",
+      "name": "If Channel Guest",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "guest"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sg01",
+      "name": "Send Guest D-1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        200
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_guest_bot",
+          "name": "Telegram Guest Bot"
+        }
+      }
+    },
+    {
+      "id": "obrf01",
+      "name": "Send Owner Brief",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        200
+      ],
+      "parameters": {
+        "chatId": "={{ $('Load Owner Chat').item.json.value }}",
+        "text": "={{ $('Select Message').item.json.owner_brief_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
+        }
+      }
+    },
+    {
+      "id": "lt1",
+      "name": "Load Templates",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        300,
+        450
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, channel, body FROM message_templates WHERE active = TRUE AND lang = 'ru';",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
     "Hourly Check": {
-      "main": [[{"node": "Get Bookings", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Load Owner Chat",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Owner Chat": {
+      "main": [
+        [
+          {
+            "node": "Get Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Get Bookings": {
-      "main": [[{"node": "Calculate Days", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Calculate Touchpoints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Calculate Days": {
-      "main": [[{"node": "Select Message", "type": "main", "index": 0}]]
+    "Calculate Touchpoints": {
+      "main": [
+        [
+          {
+            "node": "Select Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Select Message": {
-      "main": [[{"node": "Send Guest Bot", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "If Channel Guest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Owner": {
+      "main": [
+        [
+          {
+            "node": "Mark Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Channel Guest": {
+      "main": [
+        [
+          {
+            "node": "Send Guest D-1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Guest D-1": {
+      "main": [
+        [
+          {
+            "node": "Send Owner Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Owner Brief": {
+      "main": [
+        [
+          {
+            "node": "Mark Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "id": "af40ef5656b78bc0"

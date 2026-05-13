@@ -2,13 +2,17 @@ import { requireAuth } from "@/lib/session";
 import {
   adminApi,
   fetchAuditLog,
+  fetchMarketHistory,
   AdminApiError,
   RevenueData,
   CompetitorPriceObservation,
   AuditLogEntry,
+  MarketHistoryData,
 } from "@/lib/adminApi";
 import CompetitorForm from "./CompetitorForm";
 import { ApprovalsPanel } from "./ApprovalsPanel";
+import { MarketHistoryPanel } from "./MarketHistoryPanel";
+import { ManualObservationForm } from "./ManualObservationForm";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
@@ -22,11 +26,13 @@ export default async function RevenuePage() {
   let data: RevenueData | null = null;
   let error: string | null = null;
   let auditLog: AuditLogEntry[] = [];
+  let marketHistory: MarketHistoryData | null = null;
 
   try {
-    [data, auditLog] = await Promise.all([
+    [data, auditLog, marketHistory] = await Promise.all([
       adminApi("revenue"),
       fetchAuditLog().catch(() => []),
+      fetchMarketHistory().catch(() => null),
     ]);
   } catch (e) {
     error = e instanceof AdminApiError ? e.message : "Ошибка загрузки данных";
@@ -36,7 +42,8 @@ export default async function RevenuePage() {
   const gaps         = data?.gap_windows             ?? [];
   const comps        = data?.competitor_prices       ?? [];
   const recs         = data?.pricing_recommendations ?? [];
-  const sources      = data?.latest_observations ?? [];
+  const sources      = data?.latest_observations     ?? [];
+  const competitorSources = data?.competitor_sources ?? [];
 
   return (
     <div className="space-y-8">
@@ -87,22 +94,34 @@ export default async function RevenuePage() {
         <SelectionCriteria />
       </section>
 
+      {/* ── История рынка (C3-lite) ── */}
+      <section>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">История рынка</h2>
+        {marketHistory ? (
+          <MarketHistoryPanel data={marketHistory} />
+        ) : (
+          <p className="text-sm text-gray-500">Загрузка истории рынка…</p>
+        )}
+      </section>
+
       {/* ── Прямые конкуренты (C1.5) ── */}
       <section>
-        <h2 className="text-lg font-semibold text-gray-800 mb-3">Прямые конкуренты</h2>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">Прямые конкуренты — последние наблюдения</h2>
         {sources.length > 0 ? (
           <ObservationsTable observations={sources} />
         ) : (
-          <p className="text-sm text-gray-500">Данные наблюдений загружаются из Admin API…</p>
+          <p className="text-sm text-gray-500">Данных наблюдений нет.</p>
         )}
 
-        {/* Кнопки будущего C2/C3 */}
+        {/* Manual observation form (C3-lite) */}
+        <div className="mt-4">
+          <ManualObservationForm sources={competitorSources} />
+        </div>
+
+        {/* Future actions */}
         <div className="mt-3 flex gap-2">
           <button disabled className="px-3 py-1.5 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed">
-            Проверить цену сейчас (C3)
-          </button>
-          <button disabled className="px-3 py-1.5 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed">
-            Добавить наблюдение вручную (C2)
+            Авто-проверка цены (C3 full)
           </button>
         </div>
       </section>

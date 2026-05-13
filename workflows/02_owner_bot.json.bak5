@@ -1,0 +1,232 @@
+{
+  "name": "02 — Owner Bot (Voice + Ollama)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": true
+        }
+      },
+      "id": "t1",
+      "name": "TelegramTrigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ !!$json.message.voice }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "s1",
+      "name": "Is Voice?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gelendzhik-whisper:9000/asr",
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "task",
+              "value": "transcribe"
+            },
+            {
+              "name": "language",
+              "value": "ru"
+            },
+            {
+              "name": "output",
+              "value": "json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "audio_file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w1",
+      "name": "Whisper STT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        550,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Нормализация: text vs voice. Whisper мог не выполняться.\nconst trig = $(\"TelegramTrigger\").item.json;\nconst msg  = trig.message || {};\nconst telegramText = msg.text || msg.caption || \"\";\nlet whisperText = \"\";\ntry { whisperText = ($json && $json.text) || \"\"; } catch (e) {}\nconst inputText = (whisperText && whisperText.trim()) ? whisperText : telegramText;\nreturn [{ json: { input_text: inputText, chat_id: msg.chat && msg.chat.id, is_voice: !!msg.voice } }];"
+      },
+      "id": "norm1",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "id": "cl1",
+      "name": "Ollama AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1050,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral:7b-instruct-v0.2-q4_K_M\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты — локальный ИИ-помощник владельца гостевого дома в Геленджике. Отвечай по-русски, кратко, по делу, без длинных рассуждений. Помогай с бронированиями, гостями, ценами, календарём, бытовыми вопросами и управленческими решениями. Если данных не хватает — задай один уточняющий вопрос. Не выдумывай факты о бронированиях, ценах и занятости.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.input_text }}\"\n    }\n  ],\n  \"stream\": false,\n  \"keep_alive\": \"10m\",\n  \"options\": {\n    \"temperature\": 0.4,\n    \"num_predict\": 180\n  }\n}",
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "id": "r1",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot"
+        }
+      }
+    },
+    {
+      "id": "compose1",
+      "name": "Compose Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Берём ответ Ollama если он есть, иначе fallback\nconst chatId = $(\"Normalize Input\").item.json.chat_id;\nlet text = \"\";\ntry {\n  const c = $json && $json.message && $json.message.content;\n  if (typeof c === \"string\" && c.trim()) text = c.trim();\n} catch (e) {}\nif (!text) {\n  text = \"Бот получил сообщение, но AI-модуль временно не подключен.\";\n}\nreturn [{ json: { chat_id: chatId, text } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Is Voice?": {
+      "main": [
+        [
+          {
+            "node": "Whisper STT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper STT": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Ollama AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama AI": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TelegramTrigger": {
+      "main": [
+        [
+          {
+            "node": "Is Voice?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "c9a5874f34e45e4d"
+}

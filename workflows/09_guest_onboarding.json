@@ -1,0 +1,364 @@
+{
+  "id": "guestonboard1234",
+  "name": "09 — Guest Onboarding Bot",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "trig01",
+      "name": "GuestTelegramTrigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_guest_bot",
+          "name": "Telegram Guest Bot"
+        }
+      }
+    },
+    {
+      "id": "norm01",
+      "name": "Normalize Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Парсим Telegram message: /start <booking_id>\nconst msg  = ($json && $json.message) || {};\nconst from = msg.from || {};\nconst chat = msg.chat || {};\nconst rawText = (msg.text || '').toString().trim();\n\n// Разрешённый формат booking_id: A-Z a-z 0-9 - _ , длина 1..80\nconst BID_RE = /^[A-Za-z0-9_\\-]{1,80}$/;\nlet booking_id = '';\nlet valid_start = false;\nif (/^\\/start(\\s|$)/.test(rawText)) {\n  const parts = rawText.split(/\\s+/);\n  if (parts.length >= 2) {\n    const candidate = parts.slice(1).join(' ').trim();\n    if (BID_RE.test(candidate)) {\n      booking_id = candidate;\n      valid_start = true;\n    }\n  }\n}\n\nreturn {\n  chat_id:          Number(chat.id || 0),\n  telegram_user_id: Number(from.id || 0),\n  username:         String(from.username || ''),\n  first_name:       String(from.first_name || ''),\n  last_name:        String(from.last_name || ''),\n  text:             rawText,\n  booking_id:       booking_id,\n  valid_start:      valid_start\n};"
+      }
+    },
+    {
+      "id": "vb01",
+      "name": "Validate Booking",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        640,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, apartment_id, COALESCE(apartment_name,'') AS apartment_name, to_char(checkin_at,'YYYY-MM-DD') AS checkin_at, to_char(checkout_at,'YYYY-MM-DD') AS checkout_at, status FROM bookings WHERE id = '{{ $json.booking_id }}' LIMIT 1;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "merge01",
+      "name": "Merge Start+Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Объединяем результат поиска брони с данными /start\nconst startData = $('Normalize Start').first().json || {};\nconst bookingRow = ($input.first() && $input.first().json) || null;\nconst found = !!(bookingRow && bookingRow.id);\nreturn [{ json: {\n  ...startData,\n  booking_found: found && startData.valid_start,\n  booking: found ? {\n    id: bookingRow.id,\n    apartment_id: String(bookingRow.apartment_id || ''),\n    apartment_name: String(bookingRow.apartment_name || ''),\n    checkin_at: String(bookingRow.checkin_at || '').slice(0,10),\n    checkout_at: String(bookingRow.checkout_at || '').slice(0,10),\n    status: String(bookingRow.status || '')\n  } : null\n} }];"
+      }
+    },
+    {
+      "id": "if01",
+      "name": "If Booking Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.booking_found }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "upd01",
+      "name": "Update Booking Guest",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1300,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE bookings SET guest_chat_id = {{ $json.chat_id }}, guest_telegram_id = {{ $json.telegram_user_id }}, guest_username = '{{ ($json.username || '').toString().replace(/\\'/g, \"''\") }}', guest_first_name = '{{ ($json.first_name || '').toString().replace(/\\'/g, \"''\") }}', guest_last_name = '{{ ($json.last_name || '').toString().replace(/\\'/g, \"''\") }}', guest_joined_at = NOW(), guest_opt_in_at = NOW(), updated_at = NOW() WHERE id = '{{ $json.booking.id }}';",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "sgw01",
+      "name": "Send Guest Welcome",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        200
+      ],
+      "parameters": {
+        "chatId": "={{ $('Merge Start+Booking').item.json.chat_id }}",
+        "text": "=Добро пожаловать! Я помощник по вашему проживанию в Акваторинг.\n\nБронь найдена:\nобъект №{{ $('Merge Start+Booking').item.json.booking.apartment_id }} {{ $('Merge Start+Booking').item.json.booking.apartment_name }}\nдаты: {{ $('Merge Start+Booking').item.json.booking.checkin_at }} → {{ $('Merge Start+Booking').item.json.booking.checkout_at }}\n\nЗдесь можно будет получить инструкцию по заселению и задать вопрос по проживанию.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_guest_bot",
+          "name": "Telegram Guest Bot"
+        }
+      }
+    },
+    {
+      "id": "loc01",
+      "name": "Load Owner Chat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1520,
+        320
+      ],
+      "executeOnce": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM system_vars WHERE key='owner_chat_id' LIMIT 1;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "id": "son01",
+      "name": "Send Owner Notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1740,
+        320
+      ],
+      "parameters": {
+        "chatId": "={{ $('Load Owner Chat').item.json.value }}",
+        "text": "=Гость подключился к боту по брони {{ $('Merge Start+Booking').item.json.booking.id }}:\nобъект №{{ $('Merge Start+Booking').item.json.booking.apartment_id }} {{ $('Merge Start+Booking').item.json.booking.apartment_name }}\nдаты: {{ $('Merge Start+Booking').item.json.booking.checkin_at }} → {{ $('Merge Start+Booking').item.json.booking.checkout_at }}\nTelegram: @{{ $('Merge Start+Booking').item.json.username || '—' }} / id {{ $('Merge Start+Booking').item.json.telegram_user_id }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
+        }
+      }
+    },
+    {
+      "id": "snf01",
+      "name": "Send Guest Not Found",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1300,
+        440
+      ],
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "Не нашёл бронь по этой ссылке. Пожалуйста, свяжитесь с владельцем.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_guest_bot",
+          "name": "Telegram Guest Bot"
+        }
+      }
+    },
+    {
+      "id": "ifvs01",
+      "name": "If Valid Start",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        620,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "vs1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.valid_start }}"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "GuestTelegramTrigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Start": {
+      "main": [
+        [
+          {
+            "node": "If Valid Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Booking": {
+      "main": [
+        [
+          {
+            "node": "Merge Start+Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Start+Booking": {
+      "main": [
+        [
+          {
+            "node": "If Booking Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Booking Exists": {
+      "main": [
+        [
+          {
+            "node": "Update Booking Guest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Owner Chat",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Guest Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Booking Guest": {
+      "main": [
+        [
+          {
+            "node": "Send Guest Welcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Owner Chat": {
+      "main": [
+        [
+          {
+            "node": "Send Owner Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Valid Start": {
+      "main": [
+        [
+          {
+            "node": "Validate Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Guest Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

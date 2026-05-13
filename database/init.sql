@@ -111,3 +111,30 @@ CREATE INDEX IF NOT EXISTS idx_bookings_apartment ON bookings(apartment_id);
 CREATE INDEX IF NOT EXISTS idx_price_hist_apt_date ON price_history(apartment_id, date);
 CREATE INDEX IF NOT EXISTS idx_conversations_phone ON conversation_log(guest_phone);
 CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversation_log(created_at);
+
+-- message_templates: editable workflow 03 message bodies (added 2026-05-10)
+CREATE TABLE IF NOT EXISTS message_templates (
+  key        TEXT PRIMARY KEY,
+  channel    TEXT NOT NULL,
+  lang       TEXT NOT NULL DEFAULT 'ru',
+  body       TEXT NOT NULL,
+  active     BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_templates_active
+  ON message_templates(active) WHERE active;
+
+CREATE OR REPLACE FUNCTION update_message_templates_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_message_templates_updated_at ON message_templates;
+CREATE TRIGGER trg_message_templates_updated_at
+  BEFORE UPDATE ON message_templates
+  FOR EACH ROW EXECUTE FUNCTION update_message_templates_updated_at();

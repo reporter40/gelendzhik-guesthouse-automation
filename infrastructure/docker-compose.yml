@@ -18,10 +18,11 @@ services:
       - ../database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     restart: unless-stopped
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-n8n_user} -d ${POSTGRES_DB:-n8n_gelendzhik}']
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ['CMD-SHELL', 'pg_isready -U n8n_user -d n8n_gelendzhik -h localhost']
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
     networks:
       - gelendzhik-net
 
@@ -42,7 +43,7 @@ services:
       N8N_PORT: 5678
       N8N_PROTOCOL: http
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_RUNNERS_ENABLED: "true"
+      N8N_SKIP_WEBHOOK_DEREGISTRATION_SHUTDOWN: "true"
       NODE_ENV: production
       WEBHOOK_URL: ${WEBHOOK_URL:-https://n8n.example.com/}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Moscow}
@@ -50,13 +51,17 @@ services:
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
-      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      DB_POSTGRESDB_POOL_MIN: "1"
+      DB_POSTGRESDB_POOL_MAX: "10"
+      DB_POSTGRESDB_TIMEOUT: "60000"
+      DB_POSTGRESDB_QUERY_TIMEOUT: "60000"
     volumes:
       - n8n_data:/home/node/.n8n
       - ../local-files:/files
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
     networks:
       - gelendzhik-net
