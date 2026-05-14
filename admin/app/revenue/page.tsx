@@ -4,12 +4,14 @@ import {
   fetchAuditLog,
   fetchMarketHistory,
   fetchRevenueDashboard,
+  fetchRevenueNotificationsStatus,
   AdminApiError,
   RevenueData,
   CompetitorPriceObservation,
   AuditLogEntry,
   MarketHistoryData,
   RevenueDashboardData,
+  RevenueNotificationsStatus,
 } from "@/lib/adminApi";
 import Nav from "@/components/Nav";
 import CompetitorForm from "./CompetitorForm";
@@ -18,6 +20,7 @@ import { MarketHistoryPanel } from "./MarketHistoryPanel";
 import { ManualObservationForm } from "./ManualObservationForm";
 import { TodayActionsPanel } from "./TodayActionsPanel";
 import { RevenueKpiCards } from "./RevenueKpiCards";
+import { RevenueNotificationsPanel } from "./RevenueNotificationsPanel";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
@@ -32,6 +35,8 @@ export default async function RevenuePage() {
   let auditLog: AuditLogEntry[] = [];
   let marketHistory: MarketHistoryData | null = null;
   let dashboard: RevenueDashboardData | null = null;
+  let notificationsStatus: RevenueNotificationsStatus | null = null;
+  let notificationsError: string | null = null;
 
   try {
     [data, auditLog, marketHistory, dashboard] = await Promise.all([
@@ -42,6 +47,12 @@ export default async function RevenuePage() {
     ]);
   } catch (e) {
     error = e instanceof AdminApiError ? e.message : "Ошибка загрузки данных";
+  }
+
+  try {
+    notificationsStatus = await fetchRevenueNotificationsStatus();
+  } catch (e) {
+    notificationsError = e instanceof AdminApiError ? e.message : "Ошибка загрузки статуса уведомлений";
   }
 
   const summary           = data?.summary;
@@ -100,7 +111,12 @@ export default async function RevenuePage() {
         {/* ── 1. TODAY ACTIONS ── */}
         <TodayActionsPanel data={dashboard} />
 
-        {/* ── 2. KPI cards ── */}
+        {/* ── 2. NOTIFICATIONS STATUS ── */}
+        <div className="mt-6">
+          <RevenueNotificationsPanel data={notificationsStatus} error={notificationsError} />
+        </div>
+
+        {/* ── 3. KPI cards ── */}
         <div className="mt-6">
           <RevenueKpiCards dashboard={dashboard?.summary} legacy={summary} />
         </div>

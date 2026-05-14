@@ -1830,6 +1830,89 @@
         4300,
         3400
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "notif-status-check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "revenue_notifications_status",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-notif-status",
+      "name": "If Notifications Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        4200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH\nnotif_wf AS (\n  SELECT id, name, active,\n         \"versionId\", \"activeVersionId\"\n  FROM workflow_entity WHERE id = '14'\n),\nanti_spam AS (\n  SELECT\n    MAX(CASE WHEN key = 'revenue_notification_last_sent_at' THEN value END) AS last_sent_at,\n    MAX(CASE WHEN key = 'revenue_notification_last_hash' THEN value END) AS last_hash\n  FROM system_vars\n  WHERE key IN ('revenue_notification_last_sent_at', 'revenue_notification_last_hash')\n),\ndash AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status='draft')        AS draft_count,\n    COUNT(*) FILTER (WHERE status='approved')     AS approved_count,\n    COUNT(*) FILTER (WHERE status='exported')     AS exported_count,\n    COUNT(*) FILTER (WHERE status='apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_s AS (\n  SELECT COUNT(*) AS total_gaps,\n         COALESCE(SUM(estimated_loss),0) AS total_loss\n  FROM gap_windows WHERE status='open'\n),\nlast_exec AS (\n  SELECT status,\n         to_char(\"startedAt\" AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS started_at,\n         to_char(\"stoppedAt\" AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS stopped_at\n  FROM execution_entity\n  WHERE \"workflowId\" = '14'\n  ORDER BY \"startedAt\" DESC LIMIT 1\n)\nSELECT\n  nw.id AS wf_id,\n  nw.name AS wf_name,\n  nw.active AS wf_active,\n  sp.last_sent_at,\n  sp.last_hash,\n  CASE\n    WHEN sp.last_sent_at IS NOT NULL AND sp.last_sent_at != ''\n    THEN (NOW() - (sp.last_sent_at)::timestamptz) < INTERVAL '24 hours'\n    ELSE false\n  END AS within_24h,\n  CASE\n    WHEN sp.last_sent_at IS NOT NULL AND sp.last_sent_at != ''\n    THEN to_char(((sp.last_sent_at)::timestamptz + INTERVAL '24 hours') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')\n    ELSE NULL\n  END AS next_allowed_at,\n  (d.draft_count + d.approved_count + d.exported_count + d.apply_failed_count) AS today_actions_count,\n  d.apply_failed_count AS high_count,\n  (d.draft_count + d.approved_count) AS medium_count,\n  g.total_gaps,\n  g.total_loss,\n  le.status AS exec_status,\n  le.started_at AS exec_started_at,\n  le.stopped_at AS exec_stopped_at\nFROM notif_wf nw\nCROSS JOIN anti_spam sp\nCROSS JOIN dash d\nCROSS JOIN gap_s g\nLEFT JOIN last_exec le ON TRUE",
+        "options": {}
+      },
+      "id": "notif-status-query",
+      "name": "Notifications Status Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        4100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst r = $input.first().json;\n\nconst safeStr = (v) => (v != null && v !== '') ? String(v) : null;\nconst safeBool = (v) => v === true || v === 't' || v === 'true';\n\nconst lastSentAt = safeStr(r.last_sent_at);\nconst lastHash   = safeStr(r.last_hash);\nconst within24h  = safeBool(r.within_24h);\nconst nextAllowed= safeStr(r.next_allowed_at);\n\n// Compute current dashboard hash (same djb2 logic)\nconst todayActions = parseInt(r.today_actions_count) || 0;\nconst highCount    = parseInt(r.high_count) || 0;\nconst mediumCount  = parseInt(r.medium_count) || 0;\nconst totalGaps    = parseInt(r.total_gaps) || 0;\nconst totalLoss    = parseFloat(r.total_loss) || 0;\nconst lowCount     = 0; // gaps counted separately\n\n// Simple hash seed from current state\nconst contentKey = `high:${highCount}|medium:${mediumCount}|gaps:${totalGaps}|loss:${Math.round(totalLoss)}`;\nlet h = 0;\nfor (const c of contentKey) {\n  h = ((h << 5) - h + c.charCodeAt(0)) | 0;\n}\nconst currentHash = (h >>> 0).toString(16);\n\nconst hashChanged = lastHash !== currentHash;\nlet antiSpamStatus;\nif (!lastSentAt) {\n  antiSpamStatus = 'ready';\n} else if (within24h && !hashChanged) {\n  antiSpamStatus = 'blocked_by_anti_spam';\n} else {\n  antiSpamStatus = 'ready';\n}\n\nconst wfActive = safeBool(r.wf_active);\n\nconst execStatus = safeStr(r.exec_status);\nconst result = {\n  ok: true,\n  workflow: {\n    id: safeStr(r.wf_id) || '14',\n    name: safeStr(r.wf_name) || '14 — Revenue Notifications',\n    active: wfActive,\n    schedule: 'daily_09_msk',\n    schedule_utc: '06:00'\n  },\n  anti_spam: {\n    last_sent_at: lastSentAt,\n    last_hash: lastHash,\n    within_24h: within24h,\n    next_allowed_at: nextAllowed,\n    status: antiSpamStatus\n  },\n  latest_dashboard: {\n    today_actions_count: todayActions,\n    high_count: highCount,\n    medium_count: mediumCount,\n    low_count: lowCount,\n    total_gaps: totalGaps,\n    current_hash: currentHash,\n    hash_changed: hashChanged\n  },\n  last_execution: execStatus ? {\n    status: execStatus === 'success' ? 'success' : execStatus === 'error' ? 'error' : 'unknown',\n    started_at: safeStr(r.exec_started_at),\n    finished_at: safeStr(r.exec_stopped_at),\n    sent: null,\n    skip_reason: null\n  } : {\n    status: 'unknown',\n    started_at: null,\n    finished_at: null,\n    sent: null,\n    skip_reason: null\n  }\n};\n\nreturn [{ json: result }];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "format-notif-status",
+      "name": "Format Notifications Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        4100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-notif-status",
+      "name": "Respond Notifications Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4300,
+        4100
+      ]
     }
   ],
   "connections": {
@@ -2692,7 +2775,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Notifications Status",
             "type": "main",
             "index": 0
           }
@@ -2715,6 +2798,46 @@
         [
           {
             "node": "Respond Revenue Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Notifications Status": {
+      "main": [
+        [
+          {
+            "node": "Notifications Status Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notifications Status Query": {
+      "main": [
+        [
+          {
+            "node": "Format Notifications Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Notifications Status": {
+      "main": [
+        [
+          {
+            "node": "Respond Notifications Status",
             "type": "main",
             "index": 0
           }

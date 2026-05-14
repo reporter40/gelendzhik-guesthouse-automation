@@ -456,6 +456,62 @@ export async function fetchRevenueDashboard(): Promise<RevenueDashboardData> {
   return body as RevenueDashboardData;
 }
 
+// ─── Revenue Notifications Status ────────────────────────────
+
+export type RevenueNotificationWorkflowStatus = {
+  id: string;
+  name: string;
+  active: boolean;
+  schedule: string;
+  schedule_utc: string;
+};
+
+export type RevenueNotificationAntiSpam = {
+  last_sent_at: string | null;
+  last_hash: string | null;
+  within_24h: boolean;
+  next_allowed_at: string | null;
+  status: "ready" | "blocked_by_anti_spam" | "unknown";
+};
+
+export type RevenueNotificationDashboard = {
+  today_actions_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  total_gaps: number;
+  current_hash: string;
+  hash_changed: boolean;
+};
+
+export type RevenueNotificationExecution = {
+  status: "success" | "error" | "unknown";
+  started_at: string | null;
+  finished_at: string | null;
+  sent: boolean | null;
+  skip_reason: string | null;
+};
+
+export type RevenueNotificationsStatus = {
+  ok: boolean;
+  workflow: RevenueNotificationWorkflowStatus;
+  anti_spam: RevenueNotificationAntiSpam;
+  latest_dashboard: RevenueNotificationDashboard;
+  last_execution: RevenueNotificationExecution;
+};
+
+export async function fetchRevenueNotificationsStatus(): Promise<RevenueNotificationsStatus> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "revenue_notifications_status" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as RevenueNotificationsStatus;
+}
+
 export async function addCompetitorPrice(
   input: AddCompetitorPriceInput,
 ): Promise<{ ok: boolean; id: string; message: string }> {
