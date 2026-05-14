@@ -5,6 +5,8 @@ import {
   fetchMarketHistory,
   fetchRevenueDashboard,
   fetchRevenueNotificationsStatus,
+  fetchCohortMarketSummary,
+  fetchCandidates,
   AdminApiError,
   RevenueData,
   CompetitorPriceObservation,
@@ -12,6 +14,8 @@ import {
   MarketHistoryData,
   RevenueDashboardData,
   RevenueNotificationsStatus,
+  CohortSummaryResponse,
+  CandidatesResponse,
 } from "@/lib/adminApi";
 import Nav from "@/components/Nav";
 import CompetitorForm from "./CompetitorForm";
@@ -21,6 +25,8 @@ import { ManualObservationForm } from "./ManualObservationForm";
 import { TodayActionsPanel } from "./TodayActionsPanel";
 import { RevenueKpiCards } from "./RevenueKpiCards";
 import { RevenueNotificationsPanel } from "./RevenueNotificationsPanel";
+import { MarketDataQualityPanel } from "./MarketDataQualityPanel";
+import { CompetitorCandidatesPanel } from "./CompetitorCandidatesPanel";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
@@ -37,6 +43,10 @@ export default async function RevenuePage() {
   let dashboard: RevenueDashboardData | null = null;
   let notificationsStatus: RevenueNotificationsStatus | null = null;
   let notificationsError: string | null = null;
+  let cohortSummary: CohortSummaryResponse | null = null;
+  let cohortSummaryError: string | null = null;
+  let candidatesData: CandidatesResponse | null = null;
+  let candidatesError: string | null = null;
 
   try {
     [data, auditLog, marketHistory, dashboard] = await Promise.all([
@@ -49,11 +59,17 @@ export default async function RevenuePage() {
     error = e instanceof AdminApiError ? e.message : "Ошибка загрузки данных";
   }
 
-  try {
-    notificationsStatus = await fetchRevenueNotificationsStatus();
-  } catch (e) {
-    notificationsError = e instanceof AdminApiError ? e.message : "Ошибка загрузки статуса уведомлений";
-  }
+  await Promise.all([
+    fetchRevenueNotificationsStatus()
+      .then(d => { notificationsStatus = d; })
+      .catch(e => { notificationsError = e instanceof AdminApiError ? e.message : "Ошибка уведомлений"; }),
+    fetchCohortMarketSummary()
+      .then(d => { cohortSummary = d; })
+      .catch(e => { cohortSummaryError = e instanceof AdminApiError ? e.message : "Ошибка когорт"; }),
+    fetchCandidates()
+      .then(d => { candidatesData = d; })
+      .catch(e => { candidatesError = e instanceof AdminApiError ? e.message : "Ошибка кандидатов"; }),
+  ]);
 
   const summary           = data?.summary;
   const gaps              = data?.gap_windows             ?? [];
@@ -116,7 +132,12 @@ export default async function RevenuePage() {
           <RevenueNotificationsPanel data={notificationsStatus} error={notificationsError} />
         </div>
 
-        {/* ── 3. KPI cards ── */}
+        {/* ── 3. MARKET DATA QUALITY (C3.4) ── */}
+        <div className="mt-6">
+          <MarketDataQualityPanel data={cohortSummary} error={cohortSummaryError} />
+        </div>
+
+        {/* ── 4. KPI cards ── */}
         <div className="mt-6">
           <RevenueKpiCards dashboard={dashboard?.summary} legacy={summary} />
         </div>
@@ -273,6 +294,11 @@ export default async function RevenuePage() {
         {/* ── 9. Criteria ── */}
         <Section title="Критерии отбора конкурентов" sub="">
           <SelectionCriteria />
+        </Section>
+
+        {/* ── C3.4. Competitor Candidates ── */}
+        <Section title="" sub="">
+          <CompetitorCandidatesPanel data={candidatesData} error={candidatesError} />
         </Section>
 
         {/* ── 10. Add competitor manually ── */}

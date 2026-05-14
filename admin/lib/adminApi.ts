@@ -512,6 +512,140 @@ export async function fetchRevenueNotificationsStatus(): Promise<RevenueNotifica
   return body as RevenueNotificationsStatus;
 }
 
+// ─── Market Cohorts (C3.4) ───────────────────────────────────────────────────
+
+export type CompetitorCohort = {
+  code: string;
+  name: string;
+  target_apartment_ids: number[];
+  min_guests: number | null;
+  max_guests: number | null;
+  min_area_m2: number | null;
+  max_area_m2: number | null;
+  property_types: string[];
+  price_min: number | null;
+  price_max: number | null;
+  is_active: boolean;
+  active_sources: number;
+  observations_count: number;
+  latest_obs: string | null;
+  market_median: number | null;
+};
+
+export type CohortsResponse = {
+  ok: boolean;
+  cohorts: CompetitorCohort[];
+  count: number;
+};
+
+export type CompetitorCandidate = {
+  id: string;
+  name: string;
+  url: string;
+  source_platform: string;
+  cohort_code: string | null;
+  target_apartment_ids: number[];
+  similarity_score: number;
+  signal_quality_score: number;
+  discovery_status: string;
+  status: string;
+  data_quality_notes: string | null;
+  selection_reason: string | null;
+  created_at: string;
+};
+
+export type CandidatesResponse = {
+  ok: boolean;
+  candidates: CompetitorCandidate[];
+  count: number;
+};
+
+export type AptCoverage = {
+  apt_id: number;
+  cohort_code: string;
+  active_count: number;
+  fresh_obs: number;
+  total_obs: number;
+  market_median: number | null;
+  data_quality: "high" | "medium" | "low";
+  needs_attention: boolean;
+};
+
+export type CohortSummaryResponse = {
+  ok: boolean;
+  cohorts: (CompetitorCohort & { data_quality: string; fresh_obs: number })[];
+  apt_coverage: AptCoverage[];
+  candidates_pending: number;
+  has_attention_needed: boolean;
+  attention_items: { apt_id: number; cohort: string; issue: string }[] | null;
+  overall_market_quality: "high" | "medium" | "low";
+};
+
+export async function fetchCompetitorCohorts(): Promise<CohortsResponse> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "competitor_cohorts" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as CohortsResponse;
+}
+
+export async function fetchCandidates(): Promise<CandidatesResponse> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "competitor_candidates" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as CandidatesResponse;
+}
+
+export async function fetchCohortMarketSummary(): Promise<CohortSummaryResponse> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "cohort_market_summary" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as CohortSummaryResponse;
+}
+
+export async function approveCandidateSource(
+  source_id: string,
+): Promise<{ ok: boolean; message: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "competitor_source_approve_candidate", source_id })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as { ok: boolean; message: string };
+}
+
+export async function rejectCandidateSource(
+  source_id: string,
+  reason: string,
+): Promise<{ ok: boolean; message: string }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "competitor_source_reject_candidate", source_id, reason })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new AdminApiError(body?.error ?? `HTTP ${res.status}`, res.status);
+  return body as { ok: boolean; message: string };
+}
+
 export async function addCompetitorPrice(
   input: AddCompetitorPriceInput,
 ): Promise<{ ok: boolean; id: string; message: string }> {

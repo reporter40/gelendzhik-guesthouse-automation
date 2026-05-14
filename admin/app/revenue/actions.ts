@@ -8,6 +8,8 @@ import {
   exportRecommendationForRC,
   markRecommendationManualApplied,
   markRecommendationApplyFailed,
+  approveCandidateSource,
+  rejectCandidateSource,
   AdminApiError,
   RCExportResponse,
 } from "@/lib/adminApi";
@@ -136,6 +138,37 @@ export async function addObservationAction(
     return { ok: true, message: result.message ?? "Наблюдение добавлено" };
   } catch (e) {
     return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка сохранения" };
+  }
+}
+
+// ─── Cohort candidate actions (C3.4) ─────────────────────────────────────────
+
+export async function approveCandidateSourceAction(
+  source_id: string,
+): Promise<ActionState> {
+  await requireAuth();
+  if (!source_id) return { ok: false, error: "source_id обязателен" };
+  try {
+    const result = await approveCandidateSource(source_id);
+    revalidatePath("/revenue");
+    return { ok: result.ok, message: result.message };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка одобрения" };
+  }
+}
+
+export async function rejectCandidateSourceAction(
+  source_id: string,
+  reason: string,
+): Promise<ActionState> {
+  await requireAuth();
+  if (!source_id) return { ok: false, error: "source_id обязателен" };
+  try {
+    const result = await rejectCandidateSource(source_id, reason);
+    revalidatePath("/revenue");
+    return { ok: result.ok, message: result.message };
+  } catch (e) {
+    return { ok: false, error: e instanceof AdminApiError ? e.message : "Ошибка отклонения" };
   }
 }
 

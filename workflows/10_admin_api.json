@@ -1913,6 +1913,421 @@
         4300,
         4100
       ]
+    },
+    {
+      "id": "if-cohorts",
+      "name": "If Cohorts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        5000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c-cohorts",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_cohorts",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "q-cohorts",
+      "name": "Query Cohorts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        4900
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT\n  cc.code,\n  cc.name,\n  cc.target_apartment_ids,\n  cc.min_guests,\n  cc.max_guests,\n  cc.min_area_m2,\n  cc.max_area_m2,\n  cc.property_types,\n  cc.price_min,\n  cc.price_max,\n  cc.is_active,\n  COALESCE(src_stats.active_count, 0) AS active_sources,\n  COALESCE(obs_stats.obs_count, 0)    AS observations_count,\n  obs_stats.latest_obs,\n  obs_stats.market_median\nFROM competitor_cohorts cc\nLEFT JOIN (\n  SELECT cohort_code, COUNT(*) AS active_count\n  FROM competitor_sources\n  WHERE status IN ('active','approved') AND discovery_status IN ('seeded','approved')\n  GROUP BY cohort_code\n) src_stats ON src_stats.cohort_code = cc.code\nLEFT JOIN (\n  SELECT cs.cohort_code,\n         COUNT(cpo.id) AS obs_count,\n         MAX(cpo.observed_at) AS latest_obs,\n         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) AS market_median\n  FROM competitor_sources cs\n  JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n  WHERE cs.status IN ('active','approved')\n  GROUP BY cs.cohort_code\n) obs_stats ON obs_stats.cohort_code = cc.code\nORDER BY cc.is_active DESC, cc.code\n",
+        "options": {}
+      }
+    },
+    {
+      "id": "fmt-cohorts",
+      "name": "Format Cohorts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        4900
+      ],
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    cohorts: rows,\n    count: rows.length\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "res-cohorts",
+      "name": "Respond Cohorts",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4300,
+        4900
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-candidates",
+      "name": "If Candidates",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        5600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c-cand",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_candidates",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "q-candidates",
+      "name": "Query Candidates",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        5500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT\n  cs.id,\n  cs.name,\n  cs.url,\n  cs.source_platform,\n  cs.cohort_code,\n  cs.target_apartment_ids,\n  cs.similarity_score,\n  cs.signal_quality_score,\n  cs.discovery_status,\n  cs.status,\n  cs.data_quality_notes,\n  cs.selection_reason,\n  cs.created_at\nFROM competitor_sources cs\nWHERE cs.discovery_status IN ('candidate','needs_review')\nORDER BY cs.created_at DESC\n",
+        "options": {}
+      }
+    },
+    {
+      "id": "fmt-candidates",
+      "name": "Format Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        5500
+      ],
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    candidates: rows,\n    count: rows.length\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "res-candidates",
+      "name": "Respond Candidates",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4300,
+        5500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-approve-cand",
+      "name": "If Approve Candidate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        6200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c-appr",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_source_approve_candidate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "q-approve-cand",
+      "name": "Query Approve Candidate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        6100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nUPDATE competitor_sources\nSET status = 'approved',\n    discovery_status = 'approved',\n    updated_at = NOW()\nWHERE id = '{{ $json.source_id }}'\n  AND discovery_status IN ('candidate','needs_review')\nRETURNING id, name, status, discovery_status\n",
+        "options": {}
+      }
+    },
+    {
+      "id": "fmt-approve-cand",
+      "name": "Format Approve Candidate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        6100
+      ],
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    updated: rows,\n    message: rows.length > 0 ? 'Кандидат одобрен' : 'Источник не найден или уже обработан'\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "res-approve-cand",
+      "name": "Respond Approve Candidate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4300,
+        6100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-reject-cand",
+      "name": "If Reject Candidate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        6800
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c-rej",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "competitor_source_reject_candidate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "q-reject-cand",
+      "name": "Query Reject Candidate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        6700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nUPDATE competitor_sources\nSET status = 'excluded',\n    discovery_status = 'rejected',\n    exclusion_reason = '{{ $json.reason }}',\n    updated_at = NOW()\nWHERE id = '{{ $json.source_id }}'\n  AND discovery_status IN ('candidate','needs_review')\nRETURNING id, name, status, discovery_status\n",
+        "options": {}
+      }
+    },
+    {
+      "id": "fmt-reject-cand",
+      "name": "Format Reject Candidate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        6700
+      ],
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    updated: rows,\n    message: rows.length > 0 ? 'Кандидат отклонён' : 'Источник не найден или уже обработан'\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "res-reject-cand",
+      "name": "Respond Reject Candidate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4300,
+        6700
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "if-cohort-summary",
+      "name": "If Cohort Summary",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        7400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c-sum",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "cohort_market_summary",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "q-cohort-summary",
+      "name": "Query Cohort Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3700,
+        7300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH cohort_data AS (\n  SELECT\n    cc.code AS cohort_code,\n    cc.name AS cohort_name,\n    cc.target_apartment_ids,\n    COALESCE(s.active_count, 0) AS active_count,\n    COALESCE(o.fresh_count, 0)  AS fresh_obs,\n    COALESCE(o.total_obs, 0)    AS total_obs,\n    o.market_median,\n    o.market_min,\n    o.market_max,\n    o.latest_obs,\n    CASE\n      WHEN COALESCE(s.active_count, 0) >= 5 AND COALESCE(o.fresh_count, 0) >= 3 THEN 'high'\n      WHEN COALESCE(s.active_count, 0) >= 3 AND COALESCE(o.fresh_count, 0) >= 1 THEN 'medium'\n      ELSE 'low'\n    END AS data_quality\n  FROM competitor_cohorts cc\n  LEFT JOIN (\n    SELECT cohort_code, COUNT(*) AS active_count\n    FROM competitor_sources\n    WHERE status IN ('active','approved') AND discovery_status IN ('seeded','approved')\n    GROUP BY cohort_code\n  ) s ON s.cohort_code = cc.code\n  LEFT JOIN (\n    SELECT cs.cohort_code,\n           COUNT(cpo.id) AS total_obs,\n           COUNT(cpo.id) FILTER (WHERE (NOW() - cpo.observed_at) <= INTERVAL '14 days') AS fresh_count,\n           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) AS market_median,\n           MIN(cpo.price_per_night) AS market_min,\n           MAX(cpo.price_per_night) AS market_max,\n           MAX(cpo.observed_at) AS latest_obs\n    FROM competitor_sources cs\n    JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n    WHERE cs.status IN ('active','approved')\n    GROUP BY cs.cohort_code\n  ) o ON o.cohort_code = cc.code\n  WHERE cc.is_active = TRUE\n),\napt_coverage AS (\n  SELECT\n    apt_id,\n    cohort_code,\n    active_count,\n    fresh_obs,\n    total_obs,\n    market_median,\n    data_quality,\n    CASE\n      WHEN cohort_code = 'large_family_house_territory' AND active_count < 3 THEN TRUE\n      ELSE FALSE\n    END AS needs_attention\n  FROM cohort_data, unnest(target_apartment_ids) AS apt_id\n  WHERE cohort_code != 'gelendzhik_background_market'\n)\nSELECT\n  (SELECT json_agg(row_to_json(cd)) FROM cohort_data cd) AS cohorts,\n  (SELECT json_agg(row_to_json(ac)) FROM apt_coverage ac) AS apt_coverage,\n  (SELECT COUNT(*) FROM competitor_sources WHERE discovery_status IN ('candidate','needs_review')) AS candidates_pending,\n  (SELECT bool_or(needs_attention) FROM apt_coverage) AS has_attention_needed,\n  (SELECT json_agg(json_build_object('apt_id', apt_id, 'cohort', cohort_code, 'issue', 'insufficient_sources'))\n   FROM apt_coverage WHERE needs_attention) AS attention_items\n",
+        "options": {}
+      }
+    },
+    {
+      "id": "fmt-cohort-summary",
+      "name": "Format Cohort Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4000,
+        7300
+      ],
+      "parameters": {
+        "jsCode": "\nconst r = $input.first().json;\n\nconst cohorts = r.cohorts || [];\nconst aptCoverage = r.apt_coverage || [];\nconst candidatesPending = parseInt(r.candidates_pending) || 0;\nconst hasAttention = r.has_attention_needed === true || r.has_attention_needed === 't';\nconst attentionItems = r.attention_items || [];\n\nreturn [{\n  json: {\n    ok: true,\n    cohorts,\n    apt_coverage: aptCoverage,\n    candidates_pending: candidatesPending,\n    has_attention_needed: hasAttention,\n    attention_items: attentionItems,\n    overall_market_quality: hasAttention ? 'low' :\n      cohorts.every(c => c.data_quality === 'high') ? 'high' : 'medium'\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "res-cohort-summary",
+      "name": "Respond Cohort Summary",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4300,
+        7300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
     }
   ],
   "connections": {
@@ -2815,7 +3230,7 @@
         ],
         [
           {
-            "node": "Respond 400",
+            "node": "If Cohorts",
             "type": "main",
             "index": 0
           }
@@ -2838,6 +3253,206 @@
         [
           {
             "node": "Respond Notifications Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Cohorts": {
+      "main": [
+        [
+          {
+            "node": "Query Cohorts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Cohorts": {
+      "main": [
+        [
+          {
+            "node": "Format Cohorts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Cohorts": {
+      "main": [
+        [
+          {
+            "node": "Respond Cohorts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Candidates": {
+      "main": [
+        [
+          {
+            "node": "Query Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Approve Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Candidates": {
+      "main": [
+        [
+          {
+            "node": "Format Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Candidates": {
+      "main": [
+        [
+          {
+            "node": "Respond Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Approve Candidate": {
+      "main": [
+        [
+          {
+            "node": "Query Approve Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Reject Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Approve Candidate": {
+      "main": [
+        [
+          {
+            "node": "Format Approve Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Approve Candidate": {
+      "main": [
+        [
+          {
+            "node": "Respond Approve Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Reject Candidate": {
+      "main": [
+        [
+          {
+            "node": "Query Reject Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Cohort Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Reject Candidate": {
+      "main": [
+        [
+          {
+            "node": "Format Reject Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Reject Candidate": {
+      "main": [
+        [
+          {
+            "node": "Respond Reject Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Cohort Summary": {
+      "main": [
+        [
+          {
+            "node": "Query Cohort Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Cohort Summary": {
+      "main": [
+        [
+          {
+            "node": "Format Cohort Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Cohort Summary": {
+      "main": [
+        [
+          {
+            "node": "Respond Cohort Summary",
             "type": "main",
             "index": 0
           }
