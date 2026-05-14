@@ -8,7 +8,7 @@ const links = [
   { href: "/bookings",  label: "Брони" },
   { href: "/templates", label: "Шаблоны" },
   { href: "/health",    label: "Статус" },
-  { href: "/revenue",   label: "Revenue" },
+  { href: "/revenue",   label: "Доходы" },
 ];
 
 export default function Nav() {
@@ -34,7 +34,7 @@ export default function Nav() {
         />
         <div className="leading-none hidden sm:block">
           <p className="text-white font-semibold text-sm tracking-tight leading-none">Акваторинг</p>
-          <p className="text-blue-200 text-[10px] leading-none mt-0.5 font-normal opacity-80">admin panel</p>
+          <p className="text-blue-200 text-[10px] leading-none mt-0.5 font-normal opacity-80">панель управления</p>
         </div>
       </Link>
 

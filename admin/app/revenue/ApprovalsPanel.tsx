@@ -83,7 +83,7 @@ function ExportPanel({ result }: { result: RCExportResponse }) {
       {/* prices_obj */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-medium text-gray-600">prices_obj (JSON)</span>
+          <span className="text-xs font-medium text-gray-600">Цены (JSON)</span>
           <CopyButton text={pricesJson} label="Копировать JSON" />
         </div>
         <pre className="bg-white border border-gray-200 rounded p-2 text-xs text-gray-800 overflow-x-auto max-h-48 font-mono">
@@ -227,7 +227,7 @@ function RecRow({
                   disabled={isPending}
                   className="px-2 py-1 text-xs rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
                 >
-                  ⇥ Export for RealtyCalendar
+                  ⇥ Экспорт в RealtyCalendar
                 </button>
               )}
               {/* Mark Applied */}
@@ -300,28 +300,23 @@ export function ApprovalsPanel({
   if (recs.length === 0) {
     return (
       <p className="text-sm text-gray-500">
-        Рекомендаций нет. Workflow 12 (inactive) — запустите вручную или активируйте.
+        Рекомендаций нет. Запустите пересчёт после обновления данных рынка.
       </p>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="overflow-x-auto rounded-lg border border-gray-200">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
+      <div className="aq-table-wrap">
+        <table className="aq-table">
+          <thead>
             <tr>
               {["Номер", "Период", "Тип", "Текущая ₽", "Медиана ₽", "Рек. цена ₽", "Увер.", "Причина", "Статус", "Действия"].map((h) => (
-                <th
-                  key={h}
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
-                >
-                  {h}
-                </th>
+                <th key={h}>{h}</th>
               ))}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-100" key={refreshKey}>
+          <tbody key={refreshKey}>
             {recs.map((r, i) => (
               <RecRow key={r.id ?? i} rec={r} onDone={handleDone} />
             ))}
@@ -335,21 +330,16 @@ export function ApprovalsPanel({
         {auditLog.length === 0 ? (
           <p className="text-sm text-gray-400">Действий пока нет.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-200">
-            <table className="min-w-full divide-y divide-gray-200 text-xs">
-              <thead className="bg-gray-50">
+          <div className="aq-table-wrap">
+            <table className="aq-table">
+              <thead>
                 <tr>
                   {["Время", "Действие", "Апарт.", "Период", "Статус до → после", "Цена до / рек.", "Причина"].map((h) => (
-                    <th
-                      key={h}
-                      className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
-                    >
-                      {h}
-                    </th>
+                    <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-100">
+              <tbody>
                 {auditLog.map((e) => {
                   const meta = AUDIT_LABELS[e.action] ?? {
                     label: e.action,

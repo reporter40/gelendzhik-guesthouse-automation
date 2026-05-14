@@ -25,13 +25,13 @@ export function MarketHistoryPanel({ data }: { data: MarketHistoryData }) {
       {/* ── Freshness summary ── */}
       <div className="flex flex-wrap gap-3">
         <FreshBadge
-          label="Fresh ≤ 14 дней"
+          label="Актуальные ≤ 14 дней"
           count={data.total_fresh}
           total={data.total_observations}
           color={allFresh ? "green" : "yellow"}
         />
         <FreshBadge
-          label="Stale > 14 дней"
+          label="Устаревшие > 14 дней"
           count={data.total_stale}
           total={data.total_observations}
           color={allStale ? "red" : data.total_stale > 0 ? "yellow" : "green"}
@@ -50,7 +50,7 @@ export function MarketHistoryPanel({ data }: { data: MarketHistoryData }) {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {["Дата набл.", "Наблюд.", "Fresh", "Stale", "Min ₽", "Медиана ₽", "Avg ₽", "Max ₽", "Визуализация"].map((h) => (
+                {["Дата набл.", "Наблюд.", "Актуал.", "Устар.", "Min ₽", "Медиана ₽", "Avg ₽", "Max ₽", "Визуализация"].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -91,7 +91,7 @@ function HistoryRow({ row, maxMedian }: { row: MarketHistoryEntry; maxMedian: nu
       <td className="px-3 py-2.5 text-right text-gray-600">{fmt(row.max_price)}</td>
       <td className="px-3 py-2.5 min-w-[120px]">
         <Bar value={row.median_price} max={maxMedian} color={isStale ? "bg-amber-300" : "bg-indigo-400"} />
-        {isStale && <span className="text-xs text-amber-500 ml-1">⚠ stale</span>}
+        {isStale && <span className="text-xs text-amber-500 ml-1">⚠ устарело</span>}
       </td>
     </tr>
   );

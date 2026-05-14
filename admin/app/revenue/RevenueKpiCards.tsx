@@ -85,7 +85,7 @@ export function RevenueKpiCards({ dashboard, legacy }: Props) {
       label: "Ждут решения",
       value: String(waitingDecision),
       sub: waitingDecision > 0
-        ? `${draftRecs} draft + ${approvedRecs} одобрено`
+        ? `${draftRecs} черновик + ${approvedRecs} одобрено`
         : "нет ожидающих",
       accent: waitingDecision > 0 ? "warning" : "normal",
     },

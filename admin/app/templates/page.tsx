@@ -29,7 +29,7 @@ function TemplateCard({ t }: { t: TemplateRow }) {
               : "bg-gray-200 text-gray-600"
           }`}
         >
-          {t.active ? "active" : "off"}
+          {t.active ? "активен" : "выкл"}
         </span>
       </div>
       <p className="mb-2 text-xs text-gray-500">
@@ -87,8 +87,7 @@ export default async function TemplatesPage() {
           Шаблоны сообщений
         </h1>
         <p className="mb-6 text-sm text-amber-800">
-          Редактирование появится на этапе A4 — сейчас только просмотр
-          (read-only).
+          Редактирование появится на этапе A4 — сейчас только просмотр.
         </p>
         {error && (
           <div

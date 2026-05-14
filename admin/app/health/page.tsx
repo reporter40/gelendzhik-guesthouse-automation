@@ -78,22 +78,22 @@ export default async function HealthPage() {
         )}
         <div className="grid gap-4 sm:grid-cols-2">
           <StatCard
-            label="bookings_count"
+            label="Бронирований в БД"
             value={h?.bookings_count ?? "—"}
             ok={bookingsOk}
           />
           <StatCard
-            label="rc_bookings_count"
+            label="Бронирований из RC"
             value={h?.rc_bookings_count ?? "—"}
             ok={rcOk}
           />
           <StatCard
-            label="templates_count"
+            label="Шаблонов"
             value={h?.templates_count ?? "—"}
             ok={templatesOk}
           />
           <StatCard
-            label="guest_connected_count"
+            label="Гостей подключено"
             value={h?.guest_connected_count ?? "—"}
             ok={guestConnOk}
           />
@@ -108,7 +108,7 @@ export default async function HealthPage() {
                 />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-gray-600">latest_rc_sync</p>
+                <p className="text-sm text-gray-600">Последняя синхронизация RC</p>
                 <p className="break-all text-lg font-semibold text-gray-900">
                   {h?.latest_rc_sync ?? "—"}
                 </p>

@@ -88,7 +88,7 @@ export function ManualObservationForm({ sources }: { sources: CompetitorSource[]
         </div>
 
         <p className="text-xs text-gray-400">
-          Наблюдение будет сохранено с методом <code>manual_input</code>, уверенность 0.7, время — сейчас.
+          Наблюдение сохранится с методом «ручной ввод», уверенность 0.7, время — сейчас.
         </p>
 
         <button

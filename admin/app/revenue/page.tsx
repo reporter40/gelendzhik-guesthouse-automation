@@ -80,7 +80,7 @@ export default async function RevenuePage() {
             {apiOk ? (
               <span className="inline-flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-medium px-3 py-1.5 rounded-full">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Admin API OK
+                API работает
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 bg-red-500/20 border border-red-400/30 text-red-300 text-xs font-medium px-3 py-1.5 rounded-full">
