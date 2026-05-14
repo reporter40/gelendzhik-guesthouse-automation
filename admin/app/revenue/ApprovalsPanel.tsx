@@ -11,10 +11,14 @@ import {
 import type { PricingRecommendation, AuditLogEntry, RCExportResponse } from "@/lib/adminApi";
 
 const REC_TYPE_LABELS: Record<string, { label: string; cls: string }> = {
-  gap_special_price: { label: "Спеццена",   cls: "bg-yellow-100 text-yellow-800" },
-  raise_price:       { label: "↑ Повысить", cls: "bg-green-100 text-green-800"  },
-  lower_price:       { label: "↓ Снизить",  cls: "bg-red-100 text-red-800"      },
-  hold_price:        { label: "= Держать",  cls: "bg-gray-100 text-gray-600"    },
+  gap_special_price:    { label: "Спеццена",        cls: "bg-yellow-100 text-yellow-800" },
+  raise_price:          { label: "↑ Повысить",      cls: "bg-green-100 text-green-800"  },
+  lower_price:          { label: "↓ Снизить",       cls: "bg-red-100 text-red-800"      },
+  hold_price:           { label: "= Держать",       cls: "bg-gray-100 text-gray-600"    },
+  gap_fill_aggressive:  { label: "⚡ Агрессивно",   cls: "bg-orange-100 text-orange-800"},
+  gap_fill_moderate:    { label: "↗ Умеренно",      cls: "bg-blue-100 text-blue-800"    },
+  gap_fill_soft:        { label: "→ Мягко",         cls: "bg-sky-100 text-sky-800"      },
+  discount_no_market:   { label: "↓ Скидка (нет рынка)", cls: "bg-gray-100 text-gray-500"},
 };
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
