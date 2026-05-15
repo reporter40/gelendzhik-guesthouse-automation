@@ -10,7 +10,9 @@ const initial: ActionState = { ok: false };
 export function ManualObservationForm({ sources }: { sources: CompetitorSource[] }) {
   const [state, action, pending] = useActionState(addObservationAction, initial);
 
-  const activeSources = sources.filter((s) => s.status === "active");
+  const activeSources = sources.filter(
+    (s) => s.status === "active" || s.status === "approved",
+  );
 
   return (
     <details className="rounded-lg border border-indigo-100 bg-indigo-50">

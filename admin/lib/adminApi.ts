@@ -111,9 +111,13 @@ export type CompetitorSource = {
   url: string;
   address: string | null;
   district: string | null;
+  cohort_code?: string | null;
+  target_apartment_ids?: number[] | null;
   similarity_score: number;
+  signal_quality_score?: number | null;
+  discovery_status?: string | null;
   priority: number;
-  status: "active" | "excluded" | "archived" | "pending";
+  status: "active" | "approved" | "excluded" | "archived" | "pending" | "candidate" | string;
   property_type: string | null;
   area_m2: number | null;
   max_guests: number | null;
@@ -132,13 +136,15 @@ export type CompetitorSource = {
   exclusion_reason: string | null;
   last_checked_at: string | null;
   latest_price: number | null;
-  last_observed_at: string | null;
+  /** Последнее время наблюдения цены (по всем записям cpo для источника) */
+  latest_observed_at?: string | null;
+  last_observed_at?: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type CompetitorPriceObservation = {
-  id: string;
+  id?: string;
   competitor_name: string;
   similarity_score: number;
   source_platform: string;

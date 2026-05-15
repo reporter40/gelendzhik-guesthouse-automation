@@ -10,6 +10,7 @@ import {
   AdminApiError,
   RevenueData,
   CompetitorPriceObservation,
+  CompetitorSource,
   AuditLogEntry,
   MarketHistoryData,
   RevenueDashboardData,
@@ -75,8 +76,8 @@ export default async function RevenuePage() {
   const gaps              = data?.gap_windows             ?? [];
   const comps             = data?.competitor_prices       ?? [];
   const recs              = data?.pricing_recommendations ?? [];
-  const sources           = data?.latest_observations     ?? [];
-  const competitorSources = data?.competitor_sources      ?? [];
+  const latestObservations = data?.latest_observations ?? [];
+  const competitorSources  = data?.competitor_sources ?? [];
 
   const apiOk = !error && (data != null || dashboard != null);
 
@@ -261,16 +262,32 @@ export default async function RevenuePage() {
           )}
         </Section>
 
-        {/* ── 7. Competitors ── */}
+        {/* ── 7. Competitor sources (one row per source) ── */}
         <Section
           id="competitors"
           title="Прямые конкуренты"
-          sub="Последние наблюдения за ценами. Устаревшие (>14 дней) отмечены ⚠️"
+          sub="Один ряд — один источник в базе. Последняя цена и дата наблюдения агрегируются из всех записей наблюдений."
         >
-          {sources.length > 0 ? (
-            <ObservationsTable observations={sources} />
+          {competitorSources.length > 0 ? (
+            <CompetitorSourcesTable rows={competitorSources} />
           ) : (
-            <EmptyCard icon="🔍" text="Данных наблюдений нет. Добавьте первое наблюдение ниже." />
+            <EmptyCard
+              icon="🔍"
+              text="Источников конкурентов пока нет или данные не загрузились."
+            />
+          )}
+        </Section>
+
+        {/* ── 8. Price observations (history; duplicates per competitor OK) ── */}
+        <Section id="price-observations" title="Последние наблюдения цен" sub="">
+          <p className="text-sm text-gray-600 mb-4 leading-relaxed max-w-3xl">
+            Один конкурент может иметь несколько наблюдений цены на разные периоды — это не дубль,
+            а история цен.
+          </p>
+          {latestObservations.length > 0 ? (
+            <ObservationsTable observations={latestObservations} />
+          ) : (
+            <EmptyCard icon="📋" text="Наблюдений пока нет. Добавьте первое наблюдение ниже." />
           )}
           <div className="mt-5">
             <ManualObservationForm sources={competitorSources} />
@@ -282,7 +299,7 @@ export default async function RevenuePage() {
           </div>
         </Section>
 
-        {/* ── 8. Market history ── */}
+        {/* ── 9. Market history ── */}
         <Section id="market-history" title="История рынка" sub="">
           {marketHistory ? (
             <MarketHistoryPanel data={marketHistory} />
@@ -291,7 +308,7 @@ export default async function RevenuePage() {
           )}
         </Section>
 
-        {/* ── 9. Criteria ── */}
+        {/* ── 10. Criteria ── */}
         <Section title="Критерии отбора конкурентов" sub="">
           <SelectionCriteria />
         </Section>
@@ -301,7 +318,7 @@ export default async function RevenuePage() {
           <CompetitorCandidatesPanel data={candidatesData} error={candidatesError} />
         </Section>
 
-        {/* ── 10. Add competitor manually ── */}
+        {/* ── 11. Add competitor manually ── */}
         <Section title="Добавить цену конкурента вручную" sub="">
           <CompetitorForm />
           {comps.length > 0 && (
@@ -393,29 +410,137 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
+const COHORT_LABELS: Record<string, string> = {
+  standard_family_2room: "Семейные 2-комн., 4–5 гостей",
+  large_family_house_territory: "Крупные 6–8, территория",
+  gelendzhik_background_market: "Фоновый рынок",
+};
+
+function cohortLabel(code: string | null | undefined) {
+  if (!code) return "—";
+  return COHORT_LABELS[code] ?? code;
+}
+
+function fmtTargetApts(ids: number[] | null | undefined) {
+  if (!ids?.length) return "—";
+  return ids.map((id) => `№${id}`).join(", ");
+}
+
+function CompetitorSourcesTable({ rows }: { rows: CompetitorSource[] }) {
+  return (
+    <div className="aq-table-wrap">
+      <table className="aq-table">
+        <thead>
+          <tr>
+            {[
+              "Название",
+              "Когорта",
+              "Объекты",
+              "Сходство",
+              "Сигнал",
+              "Статусы",
+              "Цена min–max",
+              "Посл. цена",
+              "Наблюдение",
+              "Платформа",
+              "Ссылка",
+            ].map((h) => (
+              <th key={h}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((s) => {
+            const latestAt = s.latest_observed_at ?? s.last_observed_at;
+            const low = s.price_low;
+            const high = s.price_high;
+            const range =
+              low != null && high != null
+                ? `${fmt(low)} – ${fmt(high)}`
+                : low != null
+                  ? `${fmt(low)}`
+                  : high != null
+                    ? `${fmt(high)}`
+                    : "—";
+            return (
+              <tr key={s.id}>
+                <td className="font-medium text-gray-900 max-w-[220px]">{s.name}</td>
+                <td className="text-xs text-gray-600 whitespace-nowrap">{cohortLabel(s.cohort_code)}</td>
+                <td className="text-xs text-gray-600 whitespace-nowrap">{fmtTargetApts(s.target_apartment_ids ?? undefined)}</td>
+                <td className="text-center">
+                  <SimilarityBadge score={s.similarity_score} />
+                </td>
+                <td className="text-center text-xs text-gray-600">
+                  {s.signal_quality_score != null
+                    ? `${Math.round(s.signal_quality_score * 100)}%`
+                    : "—"}
+                </td>
+                <td className="text-xs text-gray-600 whitespace-nowrap">
+                  {s.discovery_status ?? "—"}
+                  <span className="text-gray-400"> / </span>
+                  {s.status}
+                </td>
+                <td className="text-right text-xs text-gray-700 whitespace-nowrap">{range}</td>
+                <td className="text-right font-semibold text-gray-900">
+                  {s.latest_price != null ? s.latest_price.toLocaleString("ru-RU") : "—"}
+                </td>
+                <td className="text-xs text-gray-500 whitespace-nowrap">
+                  {latestAt
+                    ? new Date(latestAt).toLocaleString("ru-RU", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })
+                    : "—"}
+                </td>
+                <td className="text-xs text-gray-500">{s.source_platform}</td>
+                <td>
+                  {s.url ? (
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline text-xs whitespace-nowrap"
+                    >
+                      открыть
+                    </a>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ObservationsTable({ observations }: { observations: CompetitorPriceObservation[] }) {
   return (
     <div className="aq-table-wrap">
       <table className="aq-table">
         <thead>
           <tr>
-            {["Конкурент", "Сходство", "Период", "₽/ночь", "Уверенность", "Метод", "Дата"].map((h) => (
+            {["Конкурент", "Сходство", "Период", "₽/ночь", "Уверенность", "Метод", "Дата набл.", "Свежесть"].map((h) => (
               <th key={h}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {observations.map((o, i) => {
-            const isStale = o.observed_at && (Date.now() - new Date(o.observed_at).getTime()) > 14 * 86400000;
+            const rowKey = o.id ?? `${o.competitor_name}-${o.observed_at}-${i}`;
+            const obsTime = o.observed_at ? new Date(o.observed_at).getTime() : 0;
+            const isStale = obsTime > 0 && Date.now() - obsTime > 14 * 86400000;
             const isSeed = o.collection_method === "seed_from_pdf_report";
             return (
-              <tr key={i}>
+              <tr key={rowKey}>
                 <td className="font-medium text-gray-900">
                   <a href={o.competitor_url} target="_blank" rel="noopener noreferrer"
                      className="text-blue-600 hover:underline">{o.competitor_name}</a>
                 </td>
                 <td className="text-center">
-                  <SimilarityBadge score={o.similarity_score} />
+                  <SimilarityBadge score={o.similarity_score ?? 0} />
                 </td>
                 <td className="text-gray-600 whitespace-nowrap text-xs">{o.stay_date_from} — {o.stay_date_to}</td>
                 <td className="text-right font-semibold text-gray-900">
@@ -429,12 +554,24 @@ function ObservationsTable({ observations }: { observations: CompetitorPriceObse
                         style={{ background: isSeed ? "#FEF3C7" : "#F1F5F9", color: isSeed ? "#92400E" : "#475569" }}>
                     {isSeed ? "seed/PDF" : o.collection_method}
                   </span>
-                  {(isStale || isSeed) && (
-                    <span className="ml-1 text-amber-500 text-xs" title="Данные устарели или seed">⚠️</span>
-                  )}
                 </td>
                 <td className="text-gray-400 text-xs whitespace-nowrap">
                   {o.observed_at ? new Date(o.observed_at).toLocaleDateString("ru-RU") : "—"}
+                </td>
+                <td className="text-center">
+                  <span
+                    className="inline-flex px-2 py-0.5 rounded text-xs font-medium"
+                    style={
+                      isStale
+                        ? { background: "#FEE2E2", color: "#B91C1C" }
+                        : { background: "#D1FAE5", color: "#065F46" }
+                    }
+                  >
+                    {isStale ? "Устарело" : "Свежее"}
+                  </span>
+                  {isSeed && (
+                    <span className="ml-1 text-amber-600 text-xs" title="Импорт из seed/PDF">⚠️</span>
+                  )}
                 </td>
               </tr>
             );
