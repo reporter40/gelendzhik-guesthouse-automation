@@ -10,7 +10,6 @@ import {
   AdminApiError,
   RevenueData,
   CompetitorPriceObservation,
-  CompetitorSource,
   AuditLogEntry,
   MarketHistoryData,
   RevenueDashboardData,
@@ -28,6 +27,7 @@ import { RevenueKpiCards } from "./RevenueKpiCards";
 import { RevenueNotificationsPanel } from "./RevenueNotificationsPanel";
 import { MarketDataQualityPanel } from "./MarketDataQualityPanel";
 import { CompetitorCandidatesPanel } from "./CompetitorCandidatesPanel";
+import { CompetitorSourcesTable } from "./CompetitorSourcesTable";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
@@ -407,112 +407,6 @@ function ActionBadge({ action }: { action: string }) {
   return (
     <span className="inline-flex px-2 py-0.5 rounded text-xs font-semibold"
           style={colors}>{action}</span>
-  );
-}
-
-const COHORT_LABELS: Record<string, string> = {
-  standard_family_2room: "Семейные 2-комн., 4–5 гостей",
-  large_family_house_territory: "Крупные 6–8, территория",
-  gelendzhik_background_market: "Фоновый рынок",
-};
-
-function cohortLabel(code: string | null | undefined) {
-  if (!code) return "—";
-  return COHORT_LABELS[code] ?? code;
-}
-
-function fmtTargetApts(ids: number[] | null | undefined) {
-  if (!ids?.length) return "—";
-  return ids.map((id) => `№${id}`).join(", ");
-}
-
-function CompetitorSourcesTable({ rows }: { rows: CompetitorSource[] }) {
-  return (
-    <div className="aq-table-wrap">
-      <table className="aq-table">
-        <thead>
-          <tr>
-            {[
-              "Название",
-              "Когорта",
-              "Объекты",
-              "Сходство",
-              "Сигнал",
-              "Статусы",
-              "Цена min–max",
-              "Посл. цена",
-              "Наблюдение",
-              "Платформа",
-              "Ссылка",
-            ].map((h) => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((s) => {
-            const latestAt = s.latest_observed_at ?? s.last_observed_at;
-            const low = s.price_low;
-            const high = s.price_high;
-            const range =
-              low != null && high != null
-                ? `${fmt(low)} – ${fmt(high)}`
-                : low != null
-                  ? `${fmt(low)}`
-                  : high != null
-                    ? `${fmt(high)}`
-                    : "—";
-            return (
-              <tr key={s.id}>
-                <td className="font-medium text-gray-900 max-w-[220px]">{s.name}</td>
-                <td className="text-xs text-gray-600 whitespace-nowrap">{cohortLabel(s.cohort_code)}</td>
-                <td className="text-xs text-gray-600 whitespace-nowrap">{fmtTargetApts(s.target_apartment_ids ?? undefined)}</td>
-                <td className="text-center">
-                  <SimilarityBadge score={s.similarity_score} />
-                </td>
-                <td className="text-center text-xs text-gray-600">
-                  {s.signal_quality_score != null
-                    ? `${Math.round(s.signal_quality_score * 100)}%`
-                    : "—"}
-                </td>
-                <td className="text-xs text-gray-600 whitespace-nowrap">
-                  {s.discovery_status ?? "—"}
-                  <span className="text-gray-400"> / </span>
-                  {s.status}
-                </td>
-                <td className="text-right text-xs text-gray-700 whitespace-nowrap">{range}</td>
-                <td className="text-right font-semibold text-gray-900">
-                  {s.latest_price != null ? s.latest_price.toLocaleString("ru-RU") : "—"}
-                </td>
-                <td className="text-xs text-gray-500 whitespace-nowrap">
-                  {latestAt
-                    ? new Date(latestAt).toLocaleString("ru-RU", {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                      })
-                    : "—"}
-                </td>
-                <td className="text-xs text-gray-500">{s.source_platform}</td>
-                <td>
-                  {s.url ? (
-                    <a
-                      href={s.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline text-xs whitespace-nowrap"
-                    >
-                      открыть
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
