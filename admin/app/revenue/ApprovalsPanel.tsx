@@ -39,9 +39,31 @@ const AUDIT_LABELS: Record<string, { label: string; cls: string }> = {
   manual_apply_failed: { label: "✗ ошибка применения",     cls: "bg-red-100 text-red-700"     },
 };
 
+const TABLE_HEADERS = [
+  "Номер",
+  "Период",
+  "Тип",
+  "Текущая ₽",
+  "Рынок ₽",
+  "Гость ₽",
+  "RC net ₽",
+  "Прямая ₽",
+  "Выгода прямой",
+  "Увер.",
+  "Причина",
+  "Статус",
+  "Действия",
+] as const;
+
+const COL_SPAN = TABLE_HEADERS.length;
+
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n as number)) return fallback;
   return (n as number).toLocaleString("ru-RU");
+}
+
+function guestTarget(rec: PricingRecommendation): number {
+  return rec.recommended_guest_price ?? rec.recommended_price;
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -52,11 +74,12 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback: select text
+      //
     }
   };
   return (
     <button
+      type="button"
       onClick={handleCopy}
       className="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
     >
@@ -71,23 +94,64 @@ function ExportPanel({ result }: { result: RCExportResponse }) {
     ? result.instruction_lines.join("\n")
     : result.manual_instruction ?? "";
 
+  const rc = result.rc_net_price;
+  const aggGuest = result.expected_aggregator_guest_price;
+  const direct = result.direct_price;
+  const gsave = result.direct_savings_for_guest;
+  const ogain = result.direct_owner_gain;
+  const pct = result.aggregator_markup_percent;
+
   return (
-    <div className="mt-3 space-y-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+    <div className="mt-3 space-y-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-semibold text-amber-800">
-          Экспорт готов — скопируй данные и введи в RealtyCalendar
+        <span className="text-xs font-semibold text-amber-900">
+          Экспорт готов — только ручное внесение в RealtyCalendar
         </span>
         {result.nights != null && (
-          <span className="text-xs text-amber-700">
+          <span className="text-xs text-amber-800">
             ({result.nights} ночей · {result.date_from} → {result.date_to})
           </span>
         )}
       </div>
 
-      {/* prices_obj */}
+      {(rc != null || aggGuest != null) && (
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div className="rounded-xl bg-white border border-amber-200 px-4 py-3 shadow-sm">
+            <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide">Цена для RealtyCalendar</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1">{fmt(rc)} ₽</p>
+            <p className="text-xs text-gray-500 mt-1">Net на ночь для prices_obj (агрегатор сверху)</p>
+          </div>
+          <div className="rounded-xl bg-white border border-amber-200 px-4 py-3 shadow-sm">
+            <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide">Ожидаемая цена гостя на агрегаторе</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1">{fmt(aggGuest ?? result.recommended_guest_price)} ₽</p>
+            {pct != null && (
+              <p className="text-xs text-gray-500 mt-1">С учётом наценки ~{fmt(pct)}%</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {direct != null && (
+        <div className="rounded-xl bg-white border border-teal-200 px-4 py-3 text-sm text-gray-800">
+          <p className="text-xs font-semibold text-teal-900 uppercase tracking-wide mb-2">Прямая цена</p>
+          <p className="text-xl font-bold text-gray-900">{fmt(direct)} ₽ <span className="text-sm font-normal text-gray-500">/ ночь</span></p>
+          <ul className="mt-2 space-y-1 text-gray-700">
+            <li>Гость экономит: <span className="font-semibold">{fmt(gsave)} ₽</span> / ночь (vs агрегатор)</li>
+            <li>Вы получаете больше: <span className="font-semibold">{fmt(ogain)} ₽</span> / ночь (vs net RC)</li>
+          </ul>
+        </div>
+      )}
+
+      <div className="rounded-lg border border-dashed border-amber-300 bg-amber-100/40 px-3 py-2 text-xs text-amber-950 leading-relaxed">
+        <p className="font-semibold mb-1">Почему цена в RealtyCalendar ниже рыночной?</p>
+        <p>
+          Агрегаторы добавляют свою комиссию/наценку. Поэтому в RealtyCalendar ставится net price, чтобы итоговая цена для гостя соответствовала рынку.
+        </p>
+      </div>
+
       <div>
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-medium text-gray-600">Цены (JSON)</span>
+          <span className="text-xs font-medium text-gray-600">Цены (JSON, net)</span>
           <CopyButton text={pricesJson} label="Копировать JSON" />
         </div>
         <pre className="bg-white border border-gray-200 rounded p-2 text-xs text-gray-800 overflow-x-auto max-h-48 font-mono">
@@ -95,7 +159,6 @@ function ExportPanel({ result }: { result: RCExportResponse }) {
         </pre>
       </div>
 
-      {/* manual_instruction */}
       {instructionText && (
         <div>
           <div className="flex items-center justify-between mb-1">
@@ -125,7 +188,6 @@ function RecRow({
   const [isPending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<RCExportResponse | null>(null);
-  // Track local status so buttons update immediately before onDone reload
   const [localStatus, setLocalStatus] = useState<string>(rec.status ?? "");
 
   const status = localStatus || (rec.status ?? "");
@@ -157,7 +219,6 @@ function RecRow({
       if (!res.ok) { setErr(res.error ?? "Ошибка экспорта"); return; }
       if (res.data) setExportResult(res.data);
       setLocalStatus("exported");
-      // don't call onDone immediately — keep export panel visible
     });
   };
 
@@ -173,6 +234,12 @@ function RecRow({
   };
   const statMeta = STATUS_LABELS[status] ?? { label: status, cls: "bg-gray-100 text-gray-500" };
   const conf = rec.confidence != null ? `${Math.round(rec.confidence * 100)}%` : "—";
+
+  const g = guestTarget(rec);
+  const rc = rec.rc_net_price;
+  const d = rec.direct_price;
+  const ogs = rec.direct_owner_gain;
+  const gsave = rec.direct_savings_for_guest;
 
   return (
     <>
@@ -193,9 +260,20 @@ function RecRow({
         <td className="px-3 py-3 text-right text-gray-600">
           {rec.market_median != null ? fmt(rec.market_median) : "—"}
         </td>
-        <td className="px-3 py-3 text-right font-bold text-gray-900">{fmt(rec.recommended_price)}</td>
+        <td className="px-3 py-3 text-right font-semibold text-gray-900">{fmt(g)}</td>
+        <td className="px-3 py-3 text-right text-indigo-900 font-medium">{rc != null ? fmt(rc) : "—"}</td>
+        <td className="px-3 py-3 text-right text-teal-900 font-medium">{d != null ? fmt(d) : "—"}</td>
+        <td className="px-3 py-3 text-right text-xs text-gray-700">
+          {ogs != null && gsave != null ? (
+            <>
+              <span className="font-semibold text-teal-800">+{fmt(ogs)}</span>
+              <span className="text-gray-400"> / </span>
+              <span className="text-gray-600">гость −{fmt(gsave)}</span>
+            </>
+          ) : "—"}
+        </td>
         <td className="px-3 py-3 text-center text-gray-500">{conf}</td>
-        <td className="px-3 py-3 text-gray-600 max-w-xs text-xs">{rec.reason}</td>
+        <td className="px-3 py-3 text-gray-600 max-w-[14rem] text-xs leading-relaxed">{rec.reason}</td>
         <td className="px-3 py-3">
           <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold ${statMeta.cls}`}>
             {statMeta.label}
@@ -204,9 +282,9 @@ function RecRow({
         <td className="px-3 py-3 min-w-[220px]">
           <div className="flex flex-col gap-1">
             <div className="flex flex-wrap gap-1">
-              {/* Approve */}
               {canApprove && (
                 <button
+                  type="button"
                   onClick={handleApprove}
                   disabled={isPending}
                   className="px-2 py-1 text-xs rounded border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors"
@@ -214,9 +292,9 @@ function RecRow({
                   ✓ Одобрить
                 </button>
               )}
-              {/* Reject */}
               {canReject && (
                 <button
+                  type="button"
                   onClick={handleReject}
                   disabled={isPending}
                   className="px-2 py-1 text-xs rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
@@ -224,9 +302,9 @@ function RecRow({
                   ✗ Отклонить
                 </button>
               )}
-              {/* Export for RC */}
               {canExport && (
                 <button
+                  type="button"
                   onClick={handleExport}
                   disabled={isPending}
                   className="px-2 py-1 text-xs rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
@@ -234,9 +312,9 @@ function RecRow({
                   ⇥ Экспорт в RealtyCalendar
                 </button>
               )}
-              {/* Mark Applied */}
               {canMarkApplied && (
                 <button
+                  type="button"
                   onClick={handleMarkApplied}
                   disabled={isPending}
                   className="px-2 py-1 text-xs rounded border border-green-300 bg-green-50 text-green-700 hover:bg-green-100 disabled:opacity-40 transition-colors"
@@ -244,9 +322,9 @@ function RecRow({
                   ✓ Применено вручную
                 </button>
               )}
-              {/* Mark Failed */}
               {canMarkFailed && (
                 <button
+                  type="button"
                   onClick={handleMarkFailed}
                   disabled={isPending}
                   className="px-2 py-1 text-xs rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
@@ -254,19 +332,13 @@ function RecRow({
                   ✗ Не удалось
                 </button>
               )}
-              {/* Terminal / no-action states */}
               {(status === "manually_applied" || status === "applied") && (
-                <span className="px-2 py-1 text-xs text-gray-400 italic">
-                  — завершено
-                </span>
+                <span className="px-2 py-1 text-xs text-gray-400 italic">— завершено</span>
               )}
               {status === "apply_failed" && !canApprove && (
-                <span className="px-2 py-1 text-xs text-red-400 italic">
-                  — повторите approve
-                </span>
+                <span className="px-2 py-1 text-xs text-red-400 italic">— повторите approve</span>
               )}
             </div>
-            {/* API unavailable notice for exported/applied states */}
             {(status === "exported" || status === "manually_applied" || status === "apply_failed") && (
               <span className="text-xs text-gray-400 italic">
                 API недоступен — используйте ручной экспорт
@@ -277,10 +349,9 @@ function RecRow({
         </td>
       </tr>
 
-      {/* Export result panel — shown after clicking Export */}
       {exportResult && (
         <tr>
-          <td colSpan={10} className="px-3 pb-3">
+          <td colSpan={COL_SPAN} className="px-3 pb-3">
             <ExportPanel result={exportResult} />
           </td>
         </tr>
@@ -311,11 +382,21 @@ export function ApprovalsPanel({
 
   return (
     <div className="space-y-6">
-      <div className="aq-table-wrap">
+      <div
+        className="rounded-xl border px-4 py-3 text-sm leading-relaxed"
+        style={{ background: "#E8F4FF", borderColor: "#93C5FD", color: "#1E3A5F" }}
+      >
+        <p className="font-semibold mb-1">Почему цена в RealtyCalendar ниже рыночной?</p>
+        <p className="text-gray-700">
+          Агрегаторы добавляют свою комиссию/наценку. Поэтому в RealtyCalendar ставится net price, чтобы итоговая цена для гостя соответствовала рынку.
+        </p>
+      </div>
+
+      <div className="aq-table-wrap overflow-x-auto">
         <table className="aq-table">
           <thead>
             <tr>
-              {["Номер", "Период", "Тип", "Текущая ₽", "Медиана ₽", "Рек. цена ₽", "Увер.", "Причина", "Статус", "Действия"].map((h) => (
+              {TABLE_HEADERS.map((h) => (
                 <th key={h}>{h}</th>
               ))}
             </tr>
@@ -328,7 +409,6 @@ export function ApprovalsPanel({
         </table>
       </div>
 
-      {/* ── Audit Log ── */}
       <div>
         <h3 className="text-base font-semibold text-gray-700 mb-2">Журнал действий</h3>
         {auditLog.length === 0 ? (

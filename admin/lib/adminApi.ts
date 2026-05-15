@@ -79,11 +79,22 @@ export type PricingRecommendation = {
   date_to: string;
   nights: number;
   current_price: number | null;
+  /** Медиана конкурентов (ориентир «рынка» для гостя) */
   market_median: number | null;
+  /** Guest-facing цель (совместимо с историческим полем WF12 ) */
   recommended_price: number;
-  recommendation_type: "gap_special_price" | "raise_price" | "lower_price" | "hold_price";
+  recommended_guest_price?: number | null;
+  rc_net_price?: number | null;
+  aggregator_markup_percent?: number | null;
+  expected_aggregator_guest_price?: number | null;
+  direct_price?: number | null;
+  direct_savings_for_guest?: number | null;
+  direct_owner_gain?: number | null;
+  pricing_channel?: string | null;
+  recommendation_type: string;
   reason: string;
   confidence: number | null;
+  source?: string;
   status: string;
 };
 
@@ -178,6 +189,10 @@ export type RevenueSummary = {
   latest_market_avg_from_sources: number | null;
   latest_market_max_from_sources: number | null;
   recommendations_count: number;
+  /** C3.8: из system_vars (через revenue_dashboard), опционально */
+  aggregator_markup_percent?: number | null;
+  direct_discount_percent?: number | null;
+  direct_booking_enabled?: boolean;
 };
 
 export type RevenueData = {
@@ -227,7 +242,15 @@ export type RCExportResponse = {
   date_from?: string;
   date_to?: string;
   nights?: number;
+  /** гостевая цель (как раньше recommended_price) */
   recommended_price?: number;
+  recommended_guest_price?: number;
+  rc_net_price?: number;
+  aggregator_markup_percent?: number;
+  expected_aggregator_guest_price?: number;
+  direct_price?: number;
+  direct_savings_for_guest?: number;
+  direct_owner_gain?: number;
   prices_obj?: Record<string, number>;
   manual_instruction?: string;
   instruction_lines?: string[];
@@ -415,6 +438,9 @@ export type RevenueDashboardSummary = {
   apply_failed_recommendations: number;
   stale_observations: number;
   fresh_observations: number;
+  aggregator_markup_percent?: number | null;
+  direct_discount_percent?: number | null;
+  direct_booking_enabled?: boolean;
 };
 
 export type RevenueDashboardTopGap = {
@@ -435,6 +461,14 @@ export type RevenueDashboardTopRec = {
   recommended_price: number;
   current_price: number | null;
   market_median: number | null;
+  recommended_guest_price?: number | null;
+  rc_net_price?: number | null;
+  aggregator_markup_percent?: number | null;
+  expected_aggregator_guest_price?: number | null;
+  direct_price?: number | null;
+  direct_savings_for_guest?: number | null;
+  direct_owner_gain?: number | null;
+  pricing_channel?: string | null;
   recommendation_type: string;
   reason: string;
   status: string;

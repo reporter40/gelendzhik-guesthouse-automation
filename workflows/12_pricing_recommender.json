@@ -25,7 +25,28 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT gw.id AS gap_id, gw.apartment_id, a.name AS apartment_name,\n       a.base_price,\n       gw.gap_start AS date_from,\n       gw.gap_end   AS date_to,\n       gw.nights,\n       gw.estimated_loss\nFROM gap_windows gw\nJOIN apartments a ON a.id = gw.apartment_id\nWHERE gw.status = 'open'\n  AND gw.gap_start >= CURRENT_DATE\nORDER BY gw.gap_start",
+        "query": "SELECT key, value FROM system_vars WHERE key IN ('aggregator_markup_percent','direct_discount_percent','direct_booking_enabled')",
+        "options": {}
+      },
+      "id": "load-pricing-vars-12-c38",
+      "name": "Load Pricing Vars",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT gw.id AS gap_id, gw.apartment_id, a.name AS apartment_name,\n       a.base_price, gw.status,\n       gw.gap_start AS date_from,\n       gw.gap_end   AS date_to,\n       gw.nights,\n       gw.estimated_loss\nFROM gap_windows gw\nJOIN apartments a ON a.id = gw.apartment_id\nWHERE gw.status = 'open'\n  AND gw.gap_start >= CURRENT_DATE\nORDER BY gw.gap_start",
         "options": {}
       },
       "id": "load-gaps-12",
@@ -66,7 +87,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\n// ── Inputs ─────────────────────────────────────────────────────────────────\nconst gaps        = $('Load Gap Windows').all().map(i => i.json);\nconst bgRows      = $('Load Market Data').all().map(i => i.json);\nconst cohortRows  = $('Load Competitor Sources').all().map(i => i.json);\n\n// ── Build per-cohort market data ─────────────────────────────────────────\nconst cohortData = {};\nfor (const row of cohortRows) {\n  cohortData[row.cohort_code] = {\n    median:       row.market_median    ? parseFloat(row.market_median)    : null,\n    weightedAvg:  row.weighted_avg     ? parseFloat(row.weighted_avg)     : null,\n    min:          row.market_min       ? parseFloat(row.market_min)       : null,\n    max:          row.market_max       ? parseFloat(row.market_max)       : null,\n    freshCount:   row.fresh_count      ? parseInt(row.fresh_count)        : 0,\n    sourceCount:  row.source_count     ? parseInt(row.source_count)       : 0,\n    hasStale:     row.has_stale_data   === true,\n    sources:      row.source_details   || []\n  };\n}\n\n// ── Background market ────────────────────────────────────────────────────\nconst bg = bgRows[0] || {};\nconst bgMedian = bg.bg_median ? parseFloat(bg.bg_median) : null;\n\n// ── Cohort assignment by apartment ──────────────────────────────────────\nconst APARTMENT_COHORTS = {\n  40: ['standard_family_2room'],\n  41: ['standard_family_2room'],\n  42: ['standard_family_2room'],\n  50: ['large_family_house_territory']\n};\nconst APT_50_MIN_SOURCES = 3;\n\n// ── Helper: get market stats for apartment ────────────────────────────────\nfunction getMarketForApt(aptId) {\n  const cohorts = APARTMENT_COHORTS[aptId] || ['standard_family_2room'];\n  for (const code of cohorts) {\n    const cd = cohortData[code];\n    if (cd && (cd.median || cd.weightedAvg) && cd.sourceCount > 0) {\n      return { ...cd, cohort_code: code, from_background: false };\n    }\n  }\n  // fallback: background market\n  return {\n    median:      bgMedian,\n    weightedAvg: bgMedian,\n    min:         null,\n    max:         null,\n    freshCount:  0,\n    sourceCount: 0,\n    hasStale:    true,\n    sources:     [],\n    cohort_code: 'gelendzhik_background_market',\n    from_background: true\n  };\n}\n\n// ── Base prices from gap data ────────────────────────────────────────────\nconst aptPrices = {};\nfor (const g of gaps) {\n  if (g.estimated_loss && g.nights && !aptPrices[g.apartment_id]) {\n    aptPrices[g.apartment_id] = Math.round(g.estimated_loss / g.nights);\n  }\n}\n\nconst recs = [];\n\nfor (const gap of gaps) {\n  if (gap.status !== 'open') continue;\n  const nights = parseInt(gap.nights);\n  if (nights < 1 || nights > 3) continue;\n\n  const aptId      = parseInt(gap.apartment_id);\n  const base_price = aptPrices[aptId] || (gap.base_price ? parseFloat(gap.base_price) : 6000);\n  const market     = getMarketForApt(aptId);\n  const hasMarket  = market.median !== null;\n  const isApt50    = aptId === 50;\n\n  // ── Confidence ──────────────────────────────────────────────────────\n  let confidence;\n\n  if (isApt50) {\n    const largeSources = market.cohort_code === 'large_family_house_territory'\n      ? market.sourceCount : 0;\n    if (largeSources < APT_50_MIN_SOURCES) {\n      confidence = 0.40;\n    } else if (market.freshCount >= 2) {\n      confidence = 0.72;\n    } else {\n      confidence = 0.55;\n    }\n  } else if (!hasMarket || market.from_background) {\n    confidence = 0.35;\n  } else if (market.freshCount === 0) {\n    confidence = market.hasStale ? 0.42 : 0.45;\n  } else if (market.freshCount >= 3) {\n    confidence = 0.78;\n  } else if (market.freshCount >= 2) {\n    confidence = 0.72;\n  } else {\n    confidence = 0.60;\n  }\n\n  // Apply static-price penalty at confidence level\n  if (market.hasStale && market.freshCount === 0) {\n    confidence = Math.min(confidence, 0.50);\n  }\n  if (market.from_background) {\n    confidence = Math.min(confidence, 0.38);\n  }\n\n  // ── Market reference ─────────────────────────────────────────────────\n  const market_median  = market.median || market.weightedAvg || null;\n  const market_min     = market.min;\n  const market_max     = market.max;\n  const market_avg     = market.weightedAvg || market.median || null;\n\n  // ── Recommended price ────────────────────────────────────────────────\n  let recommended_price;\n  let recommendation_type;\n\n  if (!hasMarket || market.from_background) {\n    recommended_price    = Math.round(base_price * 0.92);\n    recommendation_type  = 'discount_no_market';\n  } else {\n    const ref_price  = market_median || base_price;\n    const gap_factor = nights === 1 ? 0.90 : nights === 2 ? 0.93 : 0.95;\n    recommended_price   = Math.round(ref_price * gap_factor);\n    recommendation_type = nights === 1 ? 'gap_fill_aggressive'\n                        : nights === 2 ? 'gap_fill_moderate'\n                        : 'gap_fill_soft';\n  }\n\n  // ── Reason string ────────────────────────────────────────────────────\n  const cohortLabel = {\n    standard_family_2room:        'кластер стандарт 4–5 гостей',\n    large_family_house_territory: 'кластер крупные объекты 6–8 гостей',\n    gelendzhik_background_market: 'фоновый рынок'\n  }[market.cohort_code] || market.cohort_code;\n\n  const activeNames = (market.sources || [])\n    .filter(s => s.final_weight > 0.2)\n    .map(s => s.name.replace('Двухкомнатная квартира ', '').replace('Этаж под ключ ', 'Этаж '))\n    .slice(0, 3)\n    .join(', ');\n\n  let reason = '';\n  if (isApt50) {\n    const largeSources = market.cohort_code === 'large_family_house_territory'\n      ? market.sourceCount : 0;\n    if (largeSources < APT_50_MIN_SOURCES) {\n      reason = `Для объекта №50 недостаточно прямых конкурентов крупного формата (есть ${largeSources} из мин. ${APT_50_MIN_SOURCES}); рекомендация предварительная.`;\n    } else {\n      reason = `Объект №50, ${cohortLabel}. Рыночная медиана: ${Math.round(market_median)} ₽. Источников: ${market.sourceCount} (свежих: ${market.freshCount}).`;\n    }\n  } else if (market.from_background) {\n    reason = `Недостаточно данных по ${cohortLabel}. Скидка от базовой цены. Добавьте конкурентов для повышения точности.`;\n  } else {\n    const staleNote = market.hasStale && market.freshCount === 0\n      ? ' Данные устарели, требуют обновления.' : '';\n    reason = `Окно ${nights} н. (${gap.date_from}–${gap.date_to}). Рынок ${cohortLabel}: медиана ${Math.round(market_median)} ₽.`\n      + (activeNames ? ` Конкуренты: ${activeNames}.` : '')\n      + staleNote;\n  }\n\n  recs.push({\n    json: {\n      apartment_id:       gap.apartment_id,\n      date_from:          gap.date_from,\n      date_to:            gap.date_to,\n      nights,\n      current_price:      base_price,\n      market_min:         market_min ? Math.round(market_min) : null,\n      market_median:      market_median ? Math.round(market_median) : null,\n      market_avg:         market_avg ? Math.round(market_avg) : null,\n      market_max:         market_max ? Math.round(market_max) : null,\n      recommended_price,\n      recommendation_type,\n      reason,\n      confidence:         Math.round(confidence * 100) / 100,\n      source:             `cohort:${market.cohort_code}`\n    }\n  });\n}\n\nreturn recs;\n"
+        "jsCode": "\n// ── Inputs ─────────────────────────────────────────────────────────────────\nconst gaps        = $('Load Gap Windows').all().map(i => i.json);\nconst bgRows      = $('Load Market Data').all().map(i => i.json);\nconst cohortRows  = $('Load Competitor Sources').all().map(i => i.json);\n\nconst varRows = $('Load Pricing Vars').all().map(i => i.json);\nconst varMap = {};\nfor (const row of varRows) {\n  if (row.key) varMap[row.key] = row.value;\n}\nfunction numVar(key, def) {\n  const raw = varMap[key];\n  if (raw == null || raw === '') return def;\n  const n = parseFloat(String(raw));\n  return Number.isFinite(n) ? n : def;\n}\nconst aggregator_markup_percent = numVar('aggregator_markup_percent', 18);\nconst direct_discount_percent = numVar('direct_discount_percent', 5);\n\n// ── Build per-cohort market data ─────────────────────────────────────────\nconst cohortData = {};\nfor (const row of cohortRows) {\n  cohortData[row.cohort_code] = {\n    median:       row.market_median    ? parseFloat(row.market_median)    : null,\n    weightedAvg:  row.weighted_avg     ? parseFloat(row.weighted_avg)     : null,\n    min:          row.market_min       ? parseFloat(row.market_min)       : null,\n    max:          row.market_max       ? parseFloat(row.market_max)       : null,\n    freshCount:   row.fresh_count      ? parseInt(row.fresh_count)        : 0,\n    sourceCount:  row.source_count     ? parseInt(row.source_count)       : 0,\n    hasStale:     row.has_stale_data   === true,\n    sources:      row.source_details   || []\n  };\n}\n\n// ── Background market ────────────────────────────────────────────────────\nconst bg = bgRows[0] || {};\nconst bgMedian = bg.bg_median ? parseFloat(bg.bg_median) : null;\n\n// ── Cohort assignment by apartment ──────────────────────────────────────\nconst APARTMENT_COHORTS = {\n  40: ['standard_family_2room'],\n  41: ['standard_family_2room'],\n  42: ['standard_family_2room'],\n  50: ['large_family_house_territory']\n};\nconst APT_50_MIN_SOURCES = 3;\n\n// ── Helper: get market stats for apartment ────────────────────────────────\nfunction getMarketForApt(aptId) {\n  const cohorts = APARTMENT_COHORTS[aptId] || ['standard_family_2room'];\n  for (const code of cohorts) {\n    const cd = cohortData[code];\n    if (cd && (cd.median || cd.weightedAvg) && cd.sourceCount > 0) {\n      return { ...cd, cohort_code: code, from_background: false };\n    }\n  }\n  return {\n    median:      bgMedian,\n    weightedAvg: bgMedian,\n    min:         null,\n    max:         null,\n    freshCount:  0,\n    sourceCount: 0,\n    hasStale:    true,\n    sources:     [],\n    cohort_code: 'gelendzhik_background_market',\n    from_background: true\n  };\n}\n\n// ── Base prices from gap data ────────────────────────────────────────────\nconst aptPrices = {};\nfor (const g of gaps) {\n  if (g.estimated_loss && g.nights && !aptPrices[g.apartment_id]) {\n    aptPrices[g.apartment_id] = Math.round(g.estimated_loss / g.nights);\n  }\n}\n\nconst recs = [];\n\nfor (const gap of gaps) {\n  if (gap.status != null && gap.status !== 'open') continue;\n  const nights = parseInt(gap.nights);\n  if (nights < 1 || nights > 3) continue;\n\n  const aptId      = parseInt(gap.apartment_id);\n  const base_price = aptPrices[aptId] || (gap.base_price ? parseFloat(gap.base_price) : 6000);\n  const market     = getMarketForApt(aptId);\n  const hasMarket  = market.median !== null;\n  const isApt50    = aptId === 50;\n\n  let confidence;\n\n  if (isApt50) {\n    const largeSources = market.cohort_code === 'large_family_house_territory'\n      ? market.sourceCount : 0;\n    if (largeSources < APT_50_MIN_SOURCES) {\n      confidence = 0.40;\n    } else if (market.freshCount >= 2) {\n      confidence = 0.72;\n    } else {\n      confidence = 0.55;\n    }\n  } else if (!hasMarket || market.from_background) {\n    confidence = 0.35;\n  } else if (market.freshCount === 0) {\n    confidence = market.hasStale ? 0.42 : 0.45;\n  } else if (market.freshCount >= 3) {\n    confidence = 0.78;\n  } else if (market.freshCount >= 2) {\n    confidence = 0.72;\n  } else {\n    confidence = 0.60;\n  }\n\n  if (market.hasStale && market.freshCount === 0) {\n    confidence = Math.min(confidence, 0.50);\n  }\n  if (market.from_background) {\n    confidence = Math.min(confidence, 0.38);\n  }\n\n  const market_median  = market.median || market.weightedAvg || null;\n  const market_min     = market.min;\n  const market_max     = market.max;\n  const market_avg     = market.weightedAvg || market.median || null;\n\n  let recommended_price;\n  let recommendation_type;\n\n  if (!hasMarket || market.from_background) {\n    recommended_price    = Math.round(base_price * 0.92);\n    recommendation_type  = 'discount_no_market';\n  } else {\n    const ref_price  = market_median || base_price;\n    const gap_factor = nights === 1 ? 0.90 : nights === 2 ? 0.93 : 0.95;\n    recommended_price   = Math.round(ref_price * gap_factor);\n    recommendation_type = nights === 1 ? 'gap_fill_aggressive'\n                        : nights === 2 ? 'gap_fill_moderate'\n                        : 'gap_fill_soft';\n  }\n\n  const cohortLabel = {\n    standard_family_2room:        'кластер стандарт 4–5 гостей',\n    large_family_house_territory: 'кластер крупные объекты 6–8 гостей',\n    gelendzhik_background_market: 'фоновый рынок'\n  }[market.cohort_code] || market.cohort_code;\n\n  const activeNames = (market.sources || [])\n    .filter(s => s.final_weight > 0.2)\n    .map(s => s.name.replace('Двухкомнатная квартира ', '').replace('Этаж под ключ ', 'Этаж '))\n    .slice(0, 3)\n    .join(', ');\n\n  let reason = '';\n  if (isApt50) {\n    const largeSources = market.cohort_code === 'large_family_house_territory'\n      ? market.sourceCount : 0;\n    if (largeSources < APT_50_MIN_SOURCES) {\n      reason = `Для объекта №50 недостаточно прямых конкурентов крупного формата (есть ${largeSources} из мин. ${APT_50_MIN_SOURCES}); рекомендация предварительная.`;\n    } else {\n      reason = `Объект №50, ${cohortLabel}. Рыночная медиана: ${Math.round(market_median)} ₽. Источников: ${market.sourceCount} (свежих: ${market.freshCount}).`;\n    }\n  } else if (market.from_background) {\n    reason = `Недостаточно данных по ${cohortLabel}. Скидка от базовой цены. Добавьте конкурентов для повышения точности.`;\n  } else {\n    const staleNote = market.hasStale && market.freshCount === 0\n      ? ' Данные устарели, требуют обновления.' : '';\n    reason = `Окно ${nights} н. (${gap.date_from}–${gap.date_to}). Рынок ${cohortLabel}: медиана ${Math.round(market_median)} ₽.`\n      + (activeNames ? ` Конкуренты: ${activeNames}.` : '')\n      + staleNote;\n  }\n\n  const recommended_guest_price = recommended_price;\n  const rc_net_price = Math.round(recommended_guest_price / (1 + aggregator_markup_percent / 100));\n  const expected_aggregator_guest_price = Math.round(rc_net_price * (1 + aggregator_markup_percent / 100));\n  const direct_price = Math.round(recommended_guest_price * (1 - direct_discount_percent / 100));\n  const direct_savings_for_guest = expected_aggregator_guest_price - direct_price;\n  const direct_owner_gain = direct_price - rc_net_price;\n\n  reason += ` Цена ${recommended_guest_price} ₽ — ориентир для гостя (как на агрегаторе после наценки). Для RealtyCalendar с учётом ${Math.round(aggregator_markup_percent)}% наценки агрегатора рекомендуется поставить ${rc_net_price} ₽ (net).`;\n\n  recs.push({\n    json: {\n      apartment_id:       gap.apartment_id,\n      date_from:          gap.date_from,\n      date_to:            gap.date_to,\n      nights,\n      current_price:      base_price,\n      market_min:         market_min ? Math.round(market_min) : null,\n      market_median:      market_median ? Math.round(market_median) : null,\n      market_avg:         market_avg ? Math.round(market_avg) : null,\n      market_max:         market_max ? Math.round(market_max) : null,\n      recommended_price:  recommended_guest_price,\n      recommended_guest_price,\n      rc_net_price,\n      aggregator_markup_percent: Math.round(aggregator_markup_percent * 100) / 100,\n      expected_aggregator_guest_price,\n      direct_price,\n      direct_savings_for_guest,\n      direct_owner_gain,\n      pricing_channel:    'aggregator_adjusted',\n      recommendation_type,\n      reason,\n      confidence:         Math.round(confidence * 100) / 100,\n      source:             `cohort:${market.cohort_code}`\n    }\n  });\n}\n\nreturn recs;\n"
       },
       "id": "calc-recommendations",
       "name": "Calculate Recommendations",
@@ -111,10 +132,10 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO pricing_recommendations\n  (apartment_id, date_from, date_to, nights, current_price, market_min, market_median,\n   market_avg, market_max, recommended_price, recommendation_type, reason, confidence, source, status)\nVALUES ($1, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'draft')\nON CONFLICT (apartment_id, date_from)\nDO UPDATE SET\n  date_to              = EXCLUDED.date_to,\n  nights               = EXCLUDED.nights,\n  current_price        = EXCLUDED.current_price,\n  market_min           = EXCLUDED.market_min,\n  market_median        = EXCLUDED.market_median,\n  market_avg           = EXCLUDED.market_avg,\n  market_max           = EXCLUDED.market_max,\n  recommended_price    = EXCLUDED.recommended_price,\n  recommendation_type  = EXCLUDED.recommendation_type,\n  reason               = EXCLUDED.reason,\n  confidence           = EXCLUDED.confidence,\n  updated_at           = NOW()\nWHERE pricing_recommendations.status = 'draft'\nRETURNING apartment_id, date_from, recommended_price, recommendation_type, confidence",
+        "query": "INSERT INTO pricing_recommendations\n  (apartment_id, date_from, date_to, nights, current_price, market_min, market_median,\n   market_avg, market_max, recommended_price, recommended_guest_price, rc_net_price,\n   aggregator_markup_percent, expected_aggregator_guest_price, direct_price,\n   direct_savings_for_guest, direct_owner_gain, pricing_channel,\n   recommendation_type, reason, confidence, source, status)\nVALUES ($1, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'draft')\nON CONFLICT (apartment_id, date_from)\nDO UPDATE SET\n  date_to              = EXCLUDED.date_to,\n  nights               = EXCLUDED.nights,\n  current_price        = EXCLUDED.current_price,\n  market_min           = EXCLUDED.market_min,\n  market_median        = EXCLUDED.market_median,\n  market_avg           = EXCLUDED.market_avg,\n  market_max           = EXCLUDED.market_max,\n  recommended_price    = EXCLUDED.recommended_price,\n  recommended_guest_price = EXCLUDED.recommended_guest_price,\n  rc_net_price         = EXCLUDED.rc_net_price,\n  aggregator_markup_percent = EXCLUDED.aggregator_markup_percent,\n  expected_aggregator_guest_price = EXCLUDED.expected_aggregator_guest_price,\n  direct_price         = EXCLUDED.direct_price,\n  direct_savings_for_guest = EXCLUDED.direct_savings_for_guest,\n  direct_owner_gain    = EXCLUDED.direct_owner_gain,\n  pricing_channel      = EXCLUDED.pricing_channel,\n  recommendation_type  = EXCLUDED.recommendation_type,\n  reason               = EXCLUDED.reason,\n  confidence           = EXCLUDED.confidence,\n  updated_at           = NOW()\nWHERE pricing_recommendations.status = 'draft'\nRETURNING apartment_id, date_from, recommended_price, recommendation_type, confidence",
         "additionalFields": {
           "queryBatching": "independently",
-          "queryReplacement": "={{ [$json.apartment_id, $json.date_from, $json.date_to, $json.nights, $json.current_price, $json.market_min, $json.market_median, $json.market_avg, $json.market_max, $json.recommended_price, $json.recommendation_type, $json.reason, $json.confidence, $json.source] }}"
+          "queryReplacement": "={{ [$json.apartment_id, $json.date_from, $json.date_to, $json.nights, $json.current_price, $json.market_min, $json.market_median, $json.market_avg, $json.market_max, $json.recommended_price, $json.recommended_guest_price, $json.rc_net_price, $json.aggregator_markup_percent, $json.expected_aggregator_guest_price, $json.direct_price, $json.direct_savings_for_guest, $json.direct_owner_gain, $json.pricing_channel, $json.recommendation_type, $json.reason, $json.confidence, $json.source] }}"
         },
         "options": {}
       },
@@ -181,6 +202,13 @@
       "main": [
         [
           {
+            "node": "Load Pricing Vars",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Load Gap Windows",
             "type": "main",
             "index": 0
@@ -195,11 +223,29 @@
         ]
       ]
     },
+    "Load Pricing Vars": {
+      "main": [
+        [
+          {
+            "node": "Calculate Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Load Gap Windows": {
       "main": [
         [
           {
             "node": "Calculate Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cleanup Old Recs",
             "type": "main",
             "index": 0
           }
@@ -211,6 +257,17 @@
         [
           {
             "node": "Load Competitor Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Competitor Sources": {
+      "main": [
+        [
+          {
+            "node": "Calculate Recommendations",
             "type": "main",
             "index": 0
           }
@@ -237,13 +294,7 @@
             "index": 0
           }
         ],
-        [
-          {
-            "node": "Cleanup Old Recs",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Upsert Recommendations": {
@@ -251,17 +302,6 @@
         [
           {
             "node": "Cleanup Old Recs",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Load Competitor Sources": {
-      "main": [
-        [
-          {
-            "node": "Calculate Recommendations",
             "type": "main",
             "index": 0
           }

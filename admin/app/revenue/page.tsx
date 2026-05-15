@@ -28,6 +28,7 @@ import { RevenueNotificationsPanel } from "./RevenueNotificationsPanel";
 import { MarketDataQualityPanel } from "./MarketDataQualityPanel";
 import { CompetitorCandidatesPanel } from "./CompetitorCandidatesPanel";
 import { CompetitorSourcesTable } from "./CompetitorSourcesTable";
+import { DirectBookingStrategyPanel } from "./DirectBookingStrategyPanel";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
@@ -211,6 +212,10 @@ export default async function RevenuePage() {
           ) : (
             <ApprovalsPanel recs={recs} auditLog={auditLog} />
           )}
+          <DirectBookingStrategyPanel
+            summary={dashboard?.summary}
+            previewRec={dashboard?.top_recommendations?.[0]}
+          />
         </Section>
 
         {/* ── 6. Audit log ── */}
