@@ -2,6 +2,13 @@
   "name": "02 — Owner Bot (Voice + Ollama)",
   "nodes": [
     {
+      "id": "t1",
+      "name": "TelegramTrigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [
+        100,
+        300
+      ],
       "parameters": {
         "updates": [
           "message"
@@ -10,21 +17,22 @@
           "download": true
         }
       },
-      "id": "t1",
-      "name": "TelegramTrigger",
-      "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1,
-      "position": [
-        100,
-        300
-      ],
       "credentials": {
         "telegramApi": {
-          "id": "telegram_owner_bot"
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
         }
-      }
+      },
+      "typeVersion": 1
     },
     {
+      "id": "s1",
+      "name": "Is Voice?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        300,
+        300
+      ],
       "parameters": {
         "conditions": {
           "boolean": [
@@ -35,20 +43,31 @@
           ]
         }
       },
-      "id": "s1",
-      "name": "Is Voice?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        300,
-        300
-      ]
+      "typeVersion": 1
     },
     {
+      "id": "w1",
+      "name": "Whisper STT",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        550,
+        150
+      ],
       "parameters": {
-        "method": "POST",
         "url": "http://gelendzhik-whisper:9000/asr",
-        "sendQueryParameters": true,
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "audio_file",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
         "queryParameters": {
           "parameters": [
             {
@@ -65,54 +84,44 @@
             }
           ]
         },
-        "sendBody": true,
-        "contentType": "multipart-form-data",
-        "bodyParameters": {
-          "parameters": [
-            {
-              "parameterType": "formBinaryData",
-              "name": "audio_file",
-              "inputDataFieldName": "data"
-            }
-          ]
-        },
-        "options": {}
+        "sendQueryParameters": true
       },
-      "id": "w1",
-      "name": "Whisper STT",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.1,
-      "position": [
-        550,
-        150
-      ]
+      "typeVersion": 4.1
     },
     {
-      "parameters": {
-        "jsCode": "// Нормализация: text vs voice. Whisper мог не выполняться.\nconst trig = $(\"TelegramTrigger\").item.json;\nconst msg  = trig.message || {};\nconst telegramText = msg.text || msg.caption || \"\";\nlet whisperText = \"\";\ntry { whisperText = ($json && $json.text) || \"\"; } catch (e) {}\nconst inputText = (whisperText && whisperText.trim()) ? whisperText : telegramText;\nreturn [{ json: { input_text: inputText, chat_id: msg.chat && msg.chat.id, is_voice: !!msg.voice } }];"
-      },
       "id": "norm1",
       "name": "Normalize Input",
       "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         800,
         300
-      ]
+      ],
+      "parameters": {
+        "jsCode": "// Нормализация: text vs voice. Whisper мог не выполняться.\nconst trig = $(\"TelegramTrigger\").item.json;\nconst msg  = trig.message || {};\nconst telegramText = msg.text || msg.caption || \"\";\nlet whisperText = \"\";\ntry { whisperText = ($json && $json.text) || \"\"; } catch (e) {}\nconst inputText = (whisperText && whisperText.trim()) ? whisperText : telegramText;\nreturn [{ json: { input_text: inputText, chat_id: msg.chat && msg.chat.id, is_voice: !!msg.voice } }];"
+      },
+      "typeVersion": 2
     },
     {
       "id": "cl1",
       "name": "Polza AI",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "onError": "continueRegularOutput",
       "position": [
         1050,
         300
       ],
       "parameters": {
-        "method": "POST",
         "url": "https://polza.ai/api/v1/chat/completions",
+        "method": "POST",
+        "options": {
+          "timeout": 30000
+        },
+        "jsonBody": "={\n  \"model\": \"anthropic/claude-haiku-4.5\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 350,\n  \"stream\": false,\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"Ты — ИИ-помощник владельца гостевого дома в Геленджике. Отвечай строго по-русски, кратко, по делу. Помогай с бронированиями, гостями, ценами, календарём, бытовыми вопросами и управленческими решениями. Используй только факты из CONTEXT. Не выполняй собственный расчёт пересечения дат. Используй только блок РАСЧЁТ ДОСТУПНОСТИ ПО БД. ЗАПРЕЩЕНО объявлять номер свободным, если в РАСЧЁТ ДОСТУПНОСТИ он помечен ЗАНЯТ или если этот блок отсутствует. Если СВОБОДНЫЕ ПО ДАННЫМ БД: нет — на запрошенный период свободных вариантов нет, прямо это скажи, и предложи посмотреть другие даты по ссылке Homereserve. Если в CONTEXT написано «даты не распознаны системой» — НЕЛЬЗЯ ни обещать, ни предлагать конкретные номера, ни говорить «свободно/занято»; единственный допустимый ответ — короткий уточняющий вопрос про дату заезда, дату выезда и количество гостей. Не выдумывай свободные даты, цены, брони, номера и ID вне CONTEXT. Если предлагаешь альтернативные номера, свободные варианты или продолжение бронирования, добавляй ссылку: https://homereserve.ru/m66FXMW0XO/list-preview. Не вставляй ссылку больше одного раза в одном ответе.\" },\n    { \"role\": \"user\",   \"content\": {{ JSON.stringify(\"CONTEXT:\\n\" + $json.context_text + \"\\n\\nВОПРОС ПОЛЬЗОВАТЕЛЯ:\\n\" + $json.input_text) }} }\n  ]\n}",
+        "sendBody": true,
         "sendHeaders": true,
+        "specifyBody": "json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "headerParameters": {
           "parameters": [
             {
@@ -120,73 +129,65 @@
               "value": "application/json"
             }
           ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"anthropic/claude-haiku-4.5\",\n  \"temperature\": 0.3,\n  \"max_tokens\": 350,\n  \"stream\": false,\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"Ты — ИИ-помощник владельца гостевого дома в Геленджике. Отвечай строго по-русски, кратко, по делу. Помогай с бронированиями, гостями, ценами, календарём, бытовыми вопросами и управленческими решениями. Используй только факты из CONTEXT. Не выполняй собственный расчёт пересечения дат. Используй только блок РАСЧЁТ ДОСТУПНОСТИ ПО БД. ЗАПРЕЩЕНО объявлять номер свободным, если в РАСЧЁТ ДОСТУПНОСТИ он помечен ЗАНЯТ или если этот блок отсутствует. Если СВОБОДНЫЕ ПО ДАННЫМ БД: нет — на запрошенный период свободных вариантов нет, прямо это скажи, и предложи посмотреть другие даты по ссылке Homereserve. Если в CONTEXT написано «даты не распознаны системой» — НЕЛЬЗЯ ни обещать, ни предлагать конкретные номера, ни говорить «свободно/занято»; единственный допустимый ответ — короткий уточняющий вопрос про дату заезда, дату выезда и количество гостей. Не выдумывай свободные даты, цены, брони, номера и ID вне CONTEXT. Если предлагаешь альтернативные номера, свободные варианты или продолжение бронирования, добавляй ссылку: https://homereserve.ru/m66FXMW0XO/list-preview. Не вставляй ссылку больше одного раза в одном ответе.\" },\n    { \"role\": \"user\",   \"content\": {{ JSON.stringify(\"CONTEXT:\\n\" + $json.context_text + \"\\n\\nВОПРОС ПОЛЬЗОВАТЕЛЯ:\\n\" + $json.input_text) }} }\n  ]\n}",
-        "options": {
-          "timeout": 30000
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
+        }
       },
-      "onError": "continueRegularOutput",
       "credentials": {
         "httpHeaderAuth": {
           "id": "polza_header_auth",
           "name": "Polza Header Auth"
         }
-      }
+      },
+      "typeVersion": 4.2
     },
     {
-      "parameters": {
-        "chatId": "={{ $json.chat_id }}",
-        "text": "={{ $json.text }}",
-        "additionalFields": {
-          "appendAttribution": false
-        }
-      },
       "id": "r1",
       "name": "Send Reply",
       "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
       "position": [
         1300,
         300
       ],
+      "parameters": {
+        "text": "={{ $json.text }}",
+        "chatId": "={{ $json.chat_id }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
       "credentials": {
         "telegramApi": {
-          "id": "telegram_owner_bot"
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
         }
-      }
+      },
+      "typeVersion": 1.1
     },
     {
       "id": "compose1",
       "name": "Compose Reply",
       "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         860,
         300
       ],
       "parameters": {
         "jsCode": "// Берём ответ Polza/OpenAI-compatible если есть, иначе fallback\nconst chatId = $(\"Normalize Input\").item.json.chat_id;\nlet text = \"\";\ntry {\n  const j = $json;\n  // OpenAI-compatible shape\n  const c1 = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;\n  if (typeof c1 === 'string' && c1.trim()) text = c1.trim();\n  // Legacy Ollama shape (на случай если кто-то вернёт старый формат)\n  if (!text) {\n    const c2 = j && j.message && j.message.content;\n    if (typeof c2 === 'string' && c2.trim()) text = c2.trim();\n  }\n} catch (e) {}\nif (!text) {\n  text = 'Бот получил сообщение, но AI-модуль временно не подключен.';\n}\nreturn [{ json: { chat_id: chatId, text } }];"
-      }
+      },
+      "typeVersion": 2
     },
     {
       "id": "load_apts_1",
       "name": "Load Apartments",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "onError": "continueRegularOutput",
       "position": [
         560,
         200
       ],
-      "onError": "continueRegularOutput",
       "parameters": {
-        "operation": "executeQuery",
         "query": "SELECT id, name, max_guests, rooms, base_price, COALESCE(description,'') AS description FROM apartments WHERE active = TRUE ORDER BY id;",
-        "options": {}
+        "options": {},
+        "operation": "executeQuery"
       },
       "credentials": {
         "postgres": {
@@ -194,37 +195,37 @@
           "name": "Gelendzhik DB"
         }
       },
-      "executeOnce": true
+      "executeOnce": true,
+      "typeVersion": 2.6
     },
     {
       "id": "build_ctx_1",
       "name": "Build Context",
       "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
         720,
         200
       ],
       "parameters": {
-        "jsCode": "// ── Inputs ────────────────────────────────────────────────────────────────\nconst apts = $('Load Apartments').all().map(i => i.json);\nconst bks  = $('Load Bookings Window').all().map(i => i.json);\nconst gaps = $('Load Gap Windows').all().map(i => i.json);\nconst recs = $('Load Pricing Recs').all().map(i => i.json);\nconst competitorRows = $('Load Competitor Sources').all().map(i => i.json);\nconst msg  = $('Normalize Input').first().json.text || '';\n\n// ── Bookings ────────────────────────────────────────────────────────────────\nlet booksText = 'БРОНИРОВАНИЯ (ближайшие 60 дней):\\n';\nif (bks.length === 0) {\n  booksText += '  Нет броней в ближайшие 60 дней.\\n';\n} else {\n  for (const b of bks) {\n    booksText += `  • Апарт ${b.apartment_id}: ${b.checkin_at?.slice(0,10)} → ${b.checkout_at?.slice(0,10)} (${b.guests_name || 'гость'}, ${b.status})\\n`;\n  }\n}\n\n// ── Apartments ──────────────────────────────────────────────────────────────\nlet aptsText = 'АПАРТАМЕНТЫ:\\n';\nfor (const a of apts) {\n  aptsText += `  • ID ${a.id}: ${a.name || 'Апарт '+a.id}, базовая цена=${a.base_price || '?'} ₽/сут\\n`;\n}\n\n// ── Gap Windows ──────────────────────────────────────────────────────────────\nlet gapsText = 'МАЛЕНЬКИЕ ОКНА / GAP WINDOWS (1–3 ночи между бронями):\\n';\nconst openGaps = gaps.filter(g => g.status === 'open');\nif (openGaps.length === 0) {\n  gapsText += '  Маленьких окон сейчас не найдено.\\n';\n} else {\n  for (const g of openGaps) {\n    gapsText += `  • Апарт ${g.apartment_id}: ${g.gap_start} → ${g.gap_end} (${g.nights}н) — ${g.recommendation || ''}`;\n    if (g.estimated_loss) gapsText += `, потеря ~${Math.round(g.estimated_loss)} ₽`;\n    gapsText += '\\n';\n  }\n}\n\n// ── Pricing Recommendations (C3.8 net/gross/direct) ─────────────────────────\nlet recsText = 'ЦЕНОВЫЕ РЕКОМЕНДАЦИИ (рынок = цена для гостя; RC net = ставка под агрегатор):\\n';\nconst draftRecs = recs.filter(r => r.status === 'draft' || r.status === 'approved');\nif (draftRecs.length === 0) {\n  recsText += '  Рекомендаций пока нет.\\n';\n} else {\n  for (const r of draftRecs) {\n    const g = Math.round(Number(r.recommended_guest_price ?? r.recommended_price));\n    const rc = r.rc_net_price != null ? Math.round(Number(r.rc_net_price)) : null;\n    const dp = r.direct_price != null ? Math.round(Number(r.direct_price)) : null;\n    const dg = r.direct_owner_gain != null ? Math.round(Number(r.direct_owner_gain)) : null;\n    const sg = r.direct_savings_for_guest != null ? Math.round(Number(r.direct_savings_for_guest)) : null;\n    recsText += `  • Апарт ${r.apartment_id} (${r.date_from}→${r.date_to}): ${r.recommendation_type} — цель для гостя ~${g} ₽ (как прежний recommended)\\n`;\n    if (rc != null) recsText += `    RealtyCalendar net (примерно): ~${rc} ₽ на ночь — чтобы после наценки агрегатора попасть в цель для гостя.\\n`;\n    if (dp != null && dg != null && sg != null) {\n      recsText += `    Прямая продажа: ~${dp} ₽ для гостя; гость экономит ~${sg} ₽ VS агрегатор, вы больше на ~${dg} ₽ VS net RC.\\n`;\n    }\n    recsText += `    Confidence: ${r.confidence?.toFixed ? r.confidence.toFixed(2) : r.confidence}\\n`;\n    recsText += `    Причина: ${r.reason}\\n`;\n  }\n}\nrecsText += '  ОТВЕТЫ: «Почему RC ниже?» — ставим NET; агрегатор добавляет ~' + (\n  draftRecs[0]?.aggregator_markup_percent != null\n    ? draftRecs[0].aggregator_markup_percent\n    : 18\n) + '% для гостя. «Цена RC?» — rc_net_price. «Цена напрямую гостю?» — direct_price. «Что теряем на агрегаторе?» — сравни expected guest vs прямое по строке выше.\\n';\nrecsText += '  ⚠️ Рекомендации носят advisory-характер. Цены не меняются автоматически.\\n';\n\n// ── Competitor Sources (C1.5) ─────────────────────────────────────────────────\nlet compText = 'ПРЯМЫЕ КОНКУРЕНТЫ / MARKET SOURCES (C1.5):\\n';\nconst activeSources = competitorRows.filter(c => c.status === 'active');\nconst excludedSources = competitorRows.filter(c => c.status !== 'active');\n\nif (activeSources.length === 0) {\n  compText += '  Активных конкурентов не найдено.\\n';\n} else {\n  compText += `  Активных конкурентов: ${activeSources.length}\\n`;\n  for (const c of activeSources) {\n    const priceRange = c.price_low && c.price_high ? `${c.price_low}–${c.price_high} ₽/сут` : 'цена не указана';\n    const latestPrice = c.latest_price ? `${Math.round(c.latest_price)} ₽/сут` : 'нет данных';\n    const lastObserved = c.last_observed_at ? new Date(c.last_observed_at).toLocaleDateString('ru-RU') : 'никогда';\n    const staleWarn = c.is_stale ? ' ⚠️ данные устарели' : '';\n    compText += `  • ${c.name} (similarity ${c.similarity_score}%)\\n`;\n    compText += `    Платформа: ${c.source_platform}, район: ${c.district || '?'}\\n`;\n    compText += `    Цена сезона: ${priceRange}${staleWarn}\\n`;\n    compText += `    Последнее наблюдение: ${latestPrice} (${lastObserved})\\n`;\n  }\n}\n\nif (activeSources.length > 0) {\n  const prices = activeSources.map(c => c.latest_price).filter(p => p);\n  if (prices.length > 0) {\n    const sorted = prices.map(p => parseFloat(p)).sort((a,b)=>a-b);\n    const median = sorted[Math.floor(sorted.length/2)];\n    compText += `  Рыночная медиана по конкурентам: ~${Math.round(median)} ₽/сут\\n`;\n  }\n  const hasStale = activeSources.some(c => c.is_stale);\n  if (hasStale) {\n    compText += `  ⚠️ Часть данных конкурентов — seed/устаревшие. Рекомендуется ручная проверка.\\n`;\n  }\n}\n\n// ── Market Quality & Cohorts (C3.4) ─────────────────────────────────────────\nlet marketQualityText = 'КАЧЕСТВО РЫНОЧНЫХ ДАННЫХ (кластеры конкурентов C3.4):\\n';\n\n// Cohort info for №40/41/42 — standard_family_2room\nconst standardSources = activeSources.filter(c =>\n  c.cohort_code === 'standard_family_2room' || !c.cohort_code\n);\nconst standardPrices = standardSources\n  .map(c => c.latest_price ? parseFloat(c.latest_price) : null)\n  .filter(p => p);\nconst standardMedian = standardPrices.length > 0\n  ? standardPrices.sort((a,b)=>a-b)[Math.floor(standardPrices.length/2)]\n  : null;\n\nmarketQualityText += `  ОБЪЕКТЫ №40, 41, 42 — кластер: Семейные 2-комнатные 4–5 гостей\\n`;\nmarketQualityText += `    Активных источников: ${standardSources.length}/3 (мин. рекомендуется 5–7)\\n`;\nif (standardMedian) {\n  marketQualityText += `    Медиана по кластеру: ~${Math.round(standardMedian)} ₽/сут\\n`;\n}\nconst standardQuality = standardSources.length >= 5 ? 'хорошее' :\n  standardSources.length >= 3 ? 'среднее' : 'низкое — нужно добавить конкурентов';\nmarketQualityText += `    Качество данных: ${standardQuality}\\n`;\nconst hasStaleStandard = standardSources.some(c => c.is_stale);\nif (hasStaleStandard) {\n  marketQualityText += `    ⚠️ Данные seed/устаревшие. Живые цены не подтверждены.\\n`;\n}\n\n// №50 — large_family_house_territory\nconst largeSources = activeSources.filter(c =>\n  c.cohort_code === 'large_family_house_territory'\n);\nmarketQualityText += `\\n  ОБЪЕКТ №50 — кластер: Крупные объекты 6–8 гостей с территорией\\n`;\nif (largeSources.length === 0) {\n  marketQualityText += `    ⚠️ ПРЯМЫХ КОНКУРЕНТОВ ДЛЯ №50 НЕТ (0 источников)\\n`;\n  marketQualityText += `    Рекомендации по №50 — ПРЕДВАРИТЕЛЬНЫЕ (confidence ≤ 0.45)\\n`;\n  marketQualityText += `    Требуется: найти 3–5 домов/коттеджей 6–8 гостей с двором в Геленджике\\n`;\n  marketQualityText += `    Платформы: gelendzhik.travel, travelandia.ru, sutochno.ru\\n`;\n} else {\n  marketQualityText += `    Источников: ${largeSources.length}\\n`;\n  const largeQuality = largeSources.length >= 5 ? 'хорошее' :\n    largeSources.length >= 3 ? 'достаточное' : 'недостаточное — рекомендации предварительные';\n  marketQualityText += `    Качество: ${largeQuality}\\n`;\n}\n\n// System note for the bot about №50 recommendations\nmarketQualityText += `\\n  ВАЖНО ДЛЯ БОТА:\\n`;\nmarketQualityText += `  • При вопросах о цене №50 — всегда упоминать, что данные предварительные.\\n`;\nmarketQualityText += `  • №50 сравнивается с домами/этажами 6–8 гостей, а НЕ с квартирами 4–5 гостей.\\n`;\nmarketQualityText += `  • Confidence рекомендаций по №50 ≤ 0.45 до набора 3+ прямых конкурентов.\\n`;\nmarketQualityText += `  • Для повышения точности нужно вручную добавить 3–5 конкурентов крупного формата.\\n`;\n\n// Prepared bot Q&A topics (context hints)\nmarketQualityText += `\\n  ОТВЕТЫ НА ТИПИЧНЫЕ ВОПРОСЫ ВЛАДЕЛЬЦА:\\n`;\nmarketQualityText += `  • \"Почему №50 сравнивается отдельно?\" — потому что это дом 6–8 гостей с территорией, а не квартира.\\n`;\nmarketQualityText += `  • \"Достаточно ли данных по рынку?\" — для №40/41/42: ${standardQuality}. Для №50: ${largeSources.length === 0 ? 'нет данных, нужно добавить конкурентов' : 'есть ' + largeSources.length + ' источников'}.\\n`;\nmarketQualityText += `  • \"Каких конкурентов нужно добавить?\" — для №50: дома/коттеджи/этажи 6–8 гостей с двором, цена 7000–10000 ₽.\\n`;\nmarketQualityText += `  • \"Почему рекомендация по №50 менее уверенная?\" — потому что нет прямых аналогов в базе. Нужно 3+ источника кластера.\\n`;\n\n// ── Final context ─────────────────────────────────────────────────────────────\nconst context_text = [\n  '=== КОНТЕКСТ ДЛЯ ОТВЕТА ВЛАДЕЛЬЦУ ===',\n  aptsText,\n  booksText,\n  gapsText,\n  recsText,\n  compText,\n  marketQualityText,\n  '=== КОНЕЦ КОНТЕКСТА ==='\n].join('\\n');\n\nreturn [{ json: { context_text, user_message: msg } }];\n"
-      }
+        "jsCode": "// ── Inputs ────────────────────────────────────────────────────────────────\n// FIX 2026-06-05: safeAll wraps parallel data-load nodes; n8n throws if a\n// sibling branch hasn't executed in the same run. Default to [].\nconst safeAll = (n) => { try { return $(n).all().map(i => i.json); } catch (e) { return []; } };\nconst safeFirstText = (n) => { try { return $(n).first().json.text || ''; } catch (e) { return ''; } };\nconst apts = safeAll('Load Apartments');\nconst bks  = safeAll('Load Bookings Window');\nconst gaps = safeAll('Load Gap Windows');\nconst recs = safeAll('Load Pricing Recs');\nconst competitorRows = []; // disabled 2026-06-05 — orphan node removed\nconst msg  = safeFirstText('Normalize Input') || ($input.first() && $input.first().json && $input.first().json.text) || '';\n\n// ── Bookings ────────────────────────────────────────────────────────────────\nlet booksText = 'БРОНИРОВАНИЯ (ближайшие 60 дней):\\n';\nif (bks.length === 0) {\n  booksText += '  Нет броней в ближайшие 60 дней.\\n';\n} else {\n  for (const b of bks) {\n    booksText += `  • Апарт ${b.apartment_id}: ${b.checkin_at?.slice(0,10)} → ${b.checkout_at?.slice(0,10)} (${b.guests_name || 'гость'}, ${b.status})\\n`;\n  }\n}\n\n// ── Apartments ──────────────────────────────────────────────────────────────\nlet aptsText = 'АПАРТАМЕНТЫ:\\n';\nfor (const a of apts) {\n  aptsText += `  • ID ${a.id}: ${a.name || 'Апарт '+a.id}, базовая цена=${a.base_price || '?'} ₽/сут\\n`;\n}\n\n// ── Gap Windows ──────────────────────────────────────────────────────────────\nlet gapsText = 'МАЛЕНЬКИЕ ОКНА / GAP WINDOWS (1–3 ночи между бронями):\\n';\nconst openGaps = gaps.filter(g => g.status === 'open');\nif (openGaps.length === 0) {\n  gapsText += '  Маленьких окон сейчас не найдено.\\n';\n} else {\n  for (const g of openGaps) {\n    gapsText += `  • Апарт ${g.apartment_id}: ${g.gap_start} → ${g.gap_end} (${g.nights}н) — ${g.recommendation || ''}`;\n    if (g.estimated_loss) gapsText += `, потеря ~${Math.round(g.estimated_loss)} ₽`;\n    gapsText += '\\n';\n  }\n}\n\n// ── Pricing Recommendations (C3.8 net/gross/direct) ─────────────────────────\nlet recsText = 'ЦЕНОВЫЕ РЕКОМЕНДАЦИИ (рынок = цена для гостя; RC net = ставка под агрегатор):\\n';\nconst draftRecs = recs.filter(r => r.status === 'draft' || r.status === 'approved');\nif (draftRecs.length === 0) {\n  recsText += '  Рекомендаций пока нет.\\n';\n} else {\n  for (const r of draftRecs) {\n    const g = Math.round(Number(r.recommended_guest_price ?? r.recommended_price));\n    const rc = r.rc_net_price != null ? Math.round(Number(r.rc_net_price)) : null;\n    const dp = r.direct_price != null ? Math.round(Number(r.direct_price)) : null;\n    const dg = r.direct_owner_gain != null ? Math.round(Number(r.direct_owner_gain)) : null;\n    const sg = r.direct_savings_for_guest != null ? Math.round(Number(r.direct_savings_for_guest)) : null;\n    recsText += `  • Апарт ${r.apartment_id} (${r.date_from}→${r.date_to}): ${r.recommendation_type} — цель для гостя ~${g} ₽ (как прежний recommended)\\n`;\n    if (rc != null) recsText += `    RealtyCalendar net (примерно): ~${rc} ₽ на ночь — чтобы после наценки агрегатора попасть в цель для гостя.\\n`;\n    if (dp != null && dg != null && sg != null) {\n      recsText += `    Прямая продажа: ~${dp} ₽ для гостя; гость экономит ~${sg} ₽ VS агрегатор, вы больше на ~${dg} ₽ VS net RC.\\n`;\n    }\n    recsText += `    Confidence: ${r.confidence?.toFixed ? r.confidence.toFixed(2) : r.confidence}\\n`;\n    recsText += `    Причина: ${r.reason}\\n`;\n  }\n}\nrecsText += '  ОТВЕТЫ: «Почему RC ниже?» — ставим NET; агрегатор добавляет ~' + (\n  draftRecs[0]?.aggregator_markup_percent != null\n    ? draftRecs[0].aggregator_markup_percent\n    : 18\n) + '% для гостя. «Цена RC?» — rc_net_price. «Цена напрямую гостю?» — direct_price. «Что теряем на агрегаторе?» — сравни expected guest vs прямое по строке выше.\\n';\nrecsText += '  ⚠️ Рекомендации носят advisory-характер. Цены не меняются автоматически.\\n';\n\n// ── Competitor Sources (C1.5) ─────────────────────────────────────────────────\nlet compText = 'ПРЯМЫЕ КОНКУРЕНТЫ / MARKET SOURCES (C1.5):\\n';\nconst activeSources = competitorRows.filter(c => c.status === 'active');\nconst excludedSources = competitorRows.filter(c => c.status !== 'active');\n\nif (activeSources.length === 0) {\n  compText += '  Активных конкурентов не найдено.\\n';\n} else {\n  compText += `  Активных конкурентов: ${activeSources.length}\\n`;\n  for (const c of activeSources) {\n    const priceRange = c.price_low && c.price_high ? `${c.price_low}–${c.price_high} ₽/сут` : 'цена не указана';\n    const latestPrice = c.latest_price ? `${Math.round(c.latest_price)} ₽/сут` : 'нет данных';\n    const lastObserved = c.last_observed_at ? new Date(c.last_observed_at).toLocaleDateString('ru-RU') : 'никогда';\n    const staleWarn = c.is_stale ? ' ⚠️ данные устарели' : '';\n    compText += `  • ${c.name} (similarity ${c.similarity_score}%)\\n`;\n    compText += `    Платформа: ${c.source_platform}, район: ${c.district || '?'}\\n`;\n    compText += `    Цена сезона: ${priceRange}${staleWarn}\\n`;\n    compText += `    Последнее наблюдение: ${latestPrice} (${lastObserved})\\n`;\n  }\n}\n\nif (activeSources.length > 0) {\n  const prices = activeSources.map(c => c.latest_price).filter(p => p);\n  if (prices.length > 0) {\n    const sorted = prices.map(p => parseFloat(p)).sort((a,b)=>a-b);\n    const median = sorted[Math.floor(sorted.length/2)];\n    compText += `  Рыночная медиана по конкурентам: ~${Math.round(median)} ₽/сут\\n`;\n  }\n  const hasStale = activeSources.some(c => c.is_stale);\n  if (hasStale) {\n    compText += `  ⚠️ Часть данных конкурентов — seed/устаревшие. Рекомендуется ручная проверка.\\n`;\n  }\n}\n\n// ── Market Quality & Cohorts (C3.4) ─────────────────────────────────────────\nlet marketQualityText = 'КАЧЕСТВО РЫНОЧНЫХ ДАННЫХ (кластеры конкурентов C3.4):\\n';\n\n// Cohort info for №40/41/42 — standard_family_2room\nconst standardSources = activeSources.filter(c =>\n  c.cohort_code === 'standard_family_2room' || !c.cohort_code\n);\nconst standardPrices = standardSources\n  .map(c => c.latest_price ? parseFloat(c.latest_price) : null)\n  .filter(p => p);\nconst standardMedian = standardPrices.length > 0\n  ? standardPrices.sort((a,b)=>a-b)[Math.floor(standardPrices.length/2)]\n  : null;\n\nmarketQualityText += `  ОБЪЕКТЫ №40, 41, 42 — кластер: Семейные 2-комнатные 4–5 гостей\\n`;\nmarketQualityText += `    Активных источников: ${standardSources.length}/3 (мин. рекомендуется 5–7)\\n`;\nif (standardMedian) {\n  marketQualityText += `    Медиана по кластеру: ~${Math.round(standardMedian)} ₽/сут\\n`;\n}\nconst standardQuality = standardSources.length >= 5 ? 'хорошее' :\n  standardSources.length >= 3 ? 'среднее' : 'низкое — нужно добавить конкурентов';\nmarketQualityText += `    Качество данных: ${standardQuality}\\n`;\nconst hasStaleStandard = standardSources.some(c => c.is_stale);\nif (hasStaleStandard) {\n  marketQualityText += `    ⚠️ Данные seed/устаревшие. Живые цены не подтверждены.\\n`;\n}\n\n// №50 — large_family_house_territory\nconst largeSources = activeSources.filter(c =>\n  c.cohort_code === 'large_family_house_territory'\n);\nmarketQualityText += `\\n  ОБЪЕКТ №50 — кластер: Крупные объекты 6–8 гостей с территорией\\n`;\nif (largeSources.length === 0) {\n  marketQualityText += `    ⚠️ ПРЯМЫХ КОНКУРЕНТОВ ДЛЯ №50 НЕТ (0 источников)\\n`;\n  marketQualityText += `    Рекомендации по №50 — ПРЕДВАРИТЕЛЬНЫЕ (confidence ≤ 0.45)\\n`;\n  marketQualityText += `    Требуется: найти 3–5 домов/коттеджей 6–8 гостей с двором в Геленджике\\n`;\n  marketQualityText += `    Платформы: gelendzhik.travel, travelandia.ru, sutochno.ru\\n`;\n} else {\n  marketQualityText += `    Источников: ${largeSources.length}\\n`;\n  const largeQuality = largeSources.length >= 5 ? 'хорошее' :\n    largeSources.length >= 3 ? 'достаточное' : 'недостаточное — рекомендации предварительные';\n  marketQualityText += `    Качество: ${largeQuality}\\n`;\n}\n\n// System note for the bot about №50 recommendations\nmarketQualityText += `\\n  ВАЖНО ДЛЯ БОТА:\\n`;\nmarketQualityText += `  • При вопросах о цене №50 — всегда упоминать, что данные предварительные.\\n`;\nmarketQualityText += `  • №50 сравнивается с домами/этажами 6–8 гостей, а НЕ с квартирами 4–5 гостей.\\n`;\nmarketQualityText += `  • Confidence рекомендаций по №50 ≤ 0.45 до набора 3+ прямых конкурентов.\\n`;\nmarketQualityText += `  • Для повышения точности нужно вручную добавить 3–5 конкурентов крупного формата.\\n`;\n\n// Prepared bot Q&A topics (context hints)\nmarketQualityText += `\\n  ОТВЕТЫ НА ТИПИЧНЫЕ ВОПРОСЫ ВЛАДЕЛЬЦА:\\n`;\nmarketQualityText += `  • \"Почему №50 сравнивается отдельно?\" — потому что это дом 6–8 гостей с территорией, а не квартира.\\n`;\nmarketQualityText += `  • \"Достаточно ли данных по рынку?\" — для №40/41/42: ${standardQuality}. Для №50: ${largeSources.length === 0 ? 'нет данных, нужно добавить конкурентов' : 'есть ' + largeSources.length + ' источников'}.\\n`;\nmarketQualityText += `  • \"Каких конкурентов нужно добавить?\" — для №50: дома/коттеджи/этажи 6–8 гостей с двором, цена 7000–10000 ₽.\\n`;\nmarketQualityText += `  • \"Почему рекомендация по №50 менее уверенная?\" — потому что нет прямых аналогов в базе. Нужно 3+ источника кластера.\\n`;\n\n// ── Final context ─────────────────────────────────────────────────────────────\nconst context_text = [\n  '=== КОНТЕКСТ ДЛЯ ОТВЕТА ВЛАДЕЛЬЦУ ===',\n  aptsText,\n  booksText,\n  gapsText,\n  recsText,\n  compText,\n  marketQualityText,\n  '=== КОНЕЦ КОНТЕКСТА ==='\n].join('\\n');\n\nreturn [{ json: { context_text, user_message: msg } }];\n"
+      },
+      "typeVersion": 2
     },
     {
       "id": "load_book_1",
       "name": "Load Bookings Window",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "onError": "continueRegularOutput",
       "position": [
         640,
         360
       ],
-      "onError": "continueRegularOutput",
       "parameters": {
-        "operation": "executeQuery",
         "query": "SELECT apartment_id,   to_char(checkin_at,'YYYY-MM-DD')  AS checkin_at,   to_char(checkout_at,'YYYY-MM-DD') AS checkout_at,   status, source, COALESCE(notes,'') AS notes FROM bookings WHERE checkout_at >= CURRENT_DATE   AND checkin_at  <= CURRENT_DATE + INTERVAL '90 days'   AND status IN ('confirmed','booking') ORDER BY apartment_id, checkin_at;",
         "options": {
           "queryBatching": "single"
-        }
+        },
+        "operation": "executeQuery"
       },
       "credentials": {
         "postgres": {
@@ -232,73 +233,64 @@
           "name": "Gelendzhik DB"
         }
       },
-      "executeOnce": true
+      "executeOnce": true,
+      "typeVersion": 2.6
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT gw.apartment_id, a.name AS apartment_name,\n       to_char(gw.gap_start,'YYYY-MM-DD') AS gap_start,\n       to_char(gw.gap_end,'YYYY-MM-DD')   AS gap_end,\n       gw.nights, gw.estimated_loss, gw.recommendation\nFROM gap_windows gw\nJOIN apartments a ON a.id = gw.apartment_id\nWHERE gw.status = 'open'\n  AND gw.gap_start >= CURRENT_DATE\nORDER BY gw.estimated_loss DESC NULLS LAST, gw.gap_start",
-        "options": {}
-      },
       "id": "load_gap_windows",
       "name": "Load Gap Windows",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
       "position": [
         640,
         480
       ],
+      "parameters": {
+        "query": "SELECT gw.apartment_id, a.name AS apartment_name,\n       to_char(gw.gap_start,'YYYY-MM-DD') AS gap_start,\n       to_char(gw.gap_end,'YYYY-MM-DD')   AS gap_end,\n       gw.nights, gw.estimated_loss, gw.recommendation\nFROM gap_windows gw\nJOIN apartments a ON a.id = gw.apartment_id\nWHERE gw.status = 'open'\n  AND gw.gap_start >= CURRENT_DATE\nORDER BY gw.estimated_loss DESC NULLS LAST, gw.gap_start",
+        "options": {},
+        "operation": "executeQuery"
+      },
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "typeVersion": 2.5
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT pr.apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD')   AS date_to,\n       pr.nights, pr.current_price, pr.recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.recommendation_type, pr.reason, pr.confidence, pr.status::text AS status\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.confidence DESC NULLS LAST, pr.date_from",
-        "options": {}
-      },
       "id": "load_pricing_recs",
       "name": "Load Pricing Recs",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
       "position": [
         640,
         600
       ],
+      "parameters": {
+        "query": "SELECT pr.apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD')   AS date_to,\n       pr.nights, pr.current_price, pr.recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.recommendation_type, pr.reason, pr.confidence, pr.status::text AS status\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.confidence DESC NULLS LAST, pr.date_from",
+        "options": {},
+        "operation": "executeQuery"
+      },
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT\n  cs.name, cs.source_platform, cs.url, cs.district,\n  cs.similarity_score, cs.status,\n  cs.price_low, cs.price_high,\n  cs.selection_reason, cs.exclusion_reason,\n  cs.last_checked_at,\n  (SELECT cpo.price_per_night\n   FROM competitor_price_observations cpo\n   WHERE cpo.competitor_source_id = cs.id\n   ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price,\n  (SELECT cpo.observed_at\n   FROM competitor_price_observations cpo\n   WHERE cpo.competitor_source_id = cs.id\n   ORDER BY cpo.observed_at DESC LIMIT 1) AS last_observed_at,\n  (SELECT (NOW() - cpo.observed_at) > INTERVAL '14 days'\n   FROM competitor_price_observations cpo\n   WHERE cpo.competitor_source_id = cs.id\n   ORDER BY cpo.observed_at DESC LIMIT 1) AS is_stale\nFROM competitor_sources cs\nORDER BY cs.status, cs.priority",
-        "additionalFields": {}
       },
-      "id": "pg-load-competitor-sources-02",
-      "name": "Load Competitor Sources",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [
-        640,
-        770
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "1",
-          "name": "Postgres account"
-        }
-      }
+      "typeVersion": 2.5
     }
   ],
   "connections": {
+    "Polza AI": {
+      "main": [
+        [
+          {
+            "node": "Compose Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Is Voice?": {
       "main": [
         [
@@ -328,22 +320,11 @@
         ]
       ]
     },
-    "Normalize Input": {
+    "Build Context": {
       "main": [
         [
           {
-            "node": "Load Apartments",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "TelegramTrigger": {
-      "main": [
-        [
-          {
-            "node": "Is Voice?",
+            "node": "Polza AI",
             "type": "main",
             "index": 0
           }
@@ -355,17 +336,6 @@
         [
           {
             "node": "Send Reply",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Polza AI": {
-      "main": [
-        [
-          {
-            "node": "Compose Reply",
             "type": "main",
             "index": 0
           }
@@ -393,22 +363,22 @@
         ]
       ]
     },
-    "Build Context": {
+    "Normalize Input": {
       "main": [
         [
           {
-            "node": "Polza AI",
+            "node": "Load Apartments",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Load Bookings Window": {
+    "TelegramTrigger": {
       "main": [
         [
           {
-            "node": "Build Context",
+            "node": "Is Voice?",
             "type": "main",
             "index": 0
           }
@@ -437,7 +407,7 @@
         ]
       ]
     },
-    "Load Competitor Sources": {
+    "Load Bookings Window": {
       "main": [
         [
           {
