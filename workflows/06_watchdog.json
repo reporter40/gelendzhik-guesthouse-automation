@@ -1,5 +1,7 @@
 {
+  "id": "3839f89644a07841",
   "name": "06 — Watchdog (System Health)",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -16,7 +18,10 @@
       "name": "Every Hour",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [100, 300]
+      "position": [
+        100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -29,7 +34,10 @@
       "name": "Ping iCal Health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [300, 200],
+      "position": [
+        300,
+        200
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -43,7 +51,10 @@
       "name": "Ping Pricing Health",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [300, 400],
+      "position": [
+        300,
+        400
+      ],
       "onError": "continueRegularOutput"
     }
   ],
@@ -51,11 +62,24 @@
     "Every Hour": {
       "main": [
         [
-          {"node": "Ping iCal Health", "type": "main", "index": 0},
-          {"node": "Ping Pricing Health", "type": "main", "index": 0}
+          {
+            "node": "Ping iCal Health",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ping Pricing Health",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }
   },
-  "id": "3839f89644a07841"
+  "settings": null,
+  "staticData": {
+    "node:Every Hour": {
+      "recurrenceRules": []
+    }
+  }
 }

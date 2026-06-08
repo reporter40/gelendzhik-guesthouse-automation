@@ -1,5 +1,7 @@
 {
+  "id": "14",
   "name": "14 — Revenue Notifications",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -131,7 +133,7 @@
       "credentials": {
         "telegramApi": {
           "id": "telegram_owner_bot",
-          "name": "Owner Bot"
+          "name": "Telegram Owner Bot"
         }
       }
     },
@@ -243,23 +245,17 @@
       ]
     }
   },
-  "active": false,
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "saveExecutionProgress": false,
     "errorWorkflow": "07_error_handler"
   },
-  "versionId": "c32-v1-initial",
-  "id": "14",
-  "tags": [
-    {
-      "id": "revenue",
-      "name": "revenue"
-    },
-    {
-      "id": "notifications",
-      "name": "notifications"
+  "staticData": {
+    "node:Daily 09:00 MSK": {
+      "recurrenceRules": [
+        0
+      ]
     }
-  ]
+  }
 }

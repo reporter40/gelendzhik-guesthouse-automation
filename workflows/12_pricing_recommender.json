@@ -1,6 +1,7 @@
 {
   "id": "12-pricing-recommender-c1",
   "name": "12 — Pricing Recommender (C1)",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -309,13 +310,8 @@
       ]
     }
   },
-  "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "12-pricing-recommender-v1",
-  "meta": {
-    "templateCredsSetupCompleted": true
-  },
-  "tags": []
+  "staticData": {}
 }

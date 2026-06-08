@@ -1,38 +1,41 @@
 {
+  "id": "39045942b0a8223e",
   "name": "07 — Global Error Handler",
+  "active": true,
   "nodes": [
     {
-      "parameters": {},
       "id": "e1",
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
-      "typeVersion": 1,
       "position": [
         100,
         300
-      ]
+      ],
+      "parameters": {},
+      "typeVersion": 1
     },
     {
-      "parameters": {
-        "chatId": "-5269741256",
-        "text": "=🚨 *Ошибка в системе Guesthouse*\n\nРабочий процесс: `{{ $json.workflow.name }}`\nУзел: `{{ $json.node.name }}`\nОшибка: `{{ $json.error.message }}`\n\n[Открыть n8n](http://192.168.1.42:5678)",
-        "additionalFields": {
-          "parseMode": "Markdown"
-        }
-      },
       "id": "r1",
       "name": "Notify Owner",
       "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
       "position": [
         300,
         300
       ],
+      "parameters": {
+        "text": "=🚨 *Ошибка в системе Guesthouse*\n\nРабочий процесс: `{{ $json.workflow.name }}`\nУзел: `{{ $json.node.name }}`\nОшибка: `{{ $json.error.message }}`\n\n[Открыть n8n](http://192.168.1.42:5678)",
+        "chatId": "-5269741256",
+        "additionalFields": {
+          "parseMode": "Markdown",
+          "appendAttribution": false
+        }
+      },
       "credentials": {
         "telegramApi": {
           "id": "telegram_owner_bot"
         }
-      }
+      },
+      "typeVersion": 1.1
     }
   ],
   "connections": {
@@ -48,5 +51,6 @@
       ]
     }
   },
-  "id": "39045942b0a8223e"
+  "settings": null,
+  "staticData": null
 }

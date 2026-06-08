@@ -1,6 +1,7 @@
 {
   "id": "82575887-be9e-4267-8e8e-2d760de2a986",
   "name": "10 — Admin API",
+  "active": true,
   "nodes": [
     {
       "id": "wh01",
@@ -31,7 +32,7 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_db"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
@@ -50,7 +51,7 @@
         300
       ],
       "parameters": {
-        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log', 'market_history', 'add_competitor_observation', 'pricing_recommendation_export_rc', 'pricing_recommendation_mark_manual_applied', 'pricing_recommendation_mark_apply_failed',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
+        "jsCode": "const incoming = $('Webhook').first().json;\nconst headers = incoming.headers || {};\nconst body = incoming.body || {};\n\nconst incomingToken = (headers['x-admin-token'] || '').trim();\nconst storedToken = ($('Load Admin Token').first().json.value || '').trim();\nconst action = (body.action || '').trim();\n\nif (!incomingToken || incomingToken !== storedToken) {\n  return [{ json: { authorized: false, statusCode: 401, error: 'unauthorized', action: '' } }];\n}\n\nconst allowed = [\n  'health', 'bookings', 'templates', 'revenue',\n  'revenue_add_competitor_price', 'pricing_recommendations',\n  'property_context_settings',\n  'competitor_sources', 'competitor_price_observations',\n  'competitor_market_summary', 'competitor_source_update_manual',\n  'pricing_recommendation_approve', 'pricing_recommendation_reject',\n  'pricing_action_audit_log', 'market_history', 'add_competitor_observation', 'pricing_recommendation_export_rc', 'pricing_recommendation_mark_manual_applied', 'pricing_recommendation_mark_apply_failed',\n  'manual_referral_lead',\n];\nif (!allowed.includes(action)) {\n  return [{ json: { authorized: true, statusCode: 400, error: 'unknown_action', action } }];\n}\n\nreturn [{ json: { authorized: true, statusCode: 200, error: '', action } }];"
       }
     },
     {
@@ -174,7 +175,7 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_db"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
@@ -195,7 +196,7 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_db"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
@@ -216,7 +217,7 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_db"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
@@ -384,7 +385,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH gap_data AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss,\n    COUNT(*) FILTER (WHERE nights = 1) AS one_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 2) AS two_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 3) AS three_night_gaps\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_prices AS (\n  SELECT\n    COUNT(*) AS competitor_count,\n    MIN(price_per_night) AS market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n    AVG(price_per_night) AS market_avg,\n    MAX(price_per_night) AS market_max\n  FROM competitor_prices\n  WHERE date_from <= NOW() AND date_to >= NOW()\n),\ncomp_sources AS (\n  SELECT\n    COUNT(*) AS competitor_sources_count,\n    COUNT(*) FILTER (WHERE status = 'active') AS active_competitors_count,\n    COUNT(*) FILTER (WHERE status = 'excluded') AS excluded_competitors_count,\n    MIN(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_median,\n    AVG(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_avg,\n    MAX(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_max\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\nrec_data AS (\n  SELECT COUNT(*) AS recommendations_count\n  FROM pricing_recommendations\n  WHERE status IN ('draft', 'approved')\n),\ngap_json AS (\n  SELECT json_agg(row_to_json(g)) AS gap_windows\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights, estimated_loss, recommendation, status\n    FROM gap_windows WHERE status = 'open' ORDER BY gap_start, apartment_id\n  ) g\n),\ncp_json AS (\n  SELECT json_agg(row_to_json(c)) AS competitor_prices\n  FROM (\n    SELECT source, title, url, location, date_from, date_to, price_per_night, notes\n    FROM competitor_prices ORDER BY collected_at DESC LIMIT 20\n  ) c\n),\nobs_json AS (\n  SELECT COALESCE(json_agg(row_to_json(o)), '[]'::json) AS latest_observations\n  FROM (\n    SELECT cpo.id::text AS id,\n           cs.name AS competitor_name,\n           cs.similarity_score,\n           cs.source_platform,\n           cs.url AS competitor_url,\n           to_char(cpo.stay_date_from, 'YYYY-MM-DD') AS stay_date_from,\n           to_char(cpo.stay_date_to, 'YYYY-MM-DD') AS stay_date_to,\n           cpo.nights,\n           cpo.price_per_night,\n           cpo.confidence,\n           cpo.collection_method,\n           to_char(cpo.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS observed_at\n    FROM competitor_price_observations cpo\n    JOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n    ORDER BY cpo.observed_at DESC\n    LIMIT 30\n  ) o\n),\nsources_json AS (\n  SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) AS competitor_sources\n  FROM (\n    SELECT\n      cs.id::text AS id,\n      cs.name,\n      cs.source_platform,\n      cs.url,\n      cs.address,\n      cs.district,\n      cs.cohort_code,\n      cs.target_apartment_ids,\n      cs.similarity_score,\n      cs.signal_quality_score,\n      cs.discovery_status,\n      cs.status,\n      cs.priority,\n      cs.property_type,\n      cs.area_m2,\n      cs.max_guests,\n      cs.rooms,\n      cs.price_low,\n      cs.price_high,\n      cs.selection_reason,\n      cs.exclusion_reason,\n      cs.last_checked_at,\n      cs.created_at,\n      cs.updated_at,\n      (SELECT cpo.price_per_night FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price,\n      (SELECT MAX(cpo.observed_at) FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id) AS latest_observed_at\n    FROM competitor_sources cs\n    ORDER BY CASE WHEN cs.status IN ('active','approved') THEN 0 ELSE 1 END, cs.priority\n  ) s\n),\nrec_json AS (\n  SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS pricing_recommendations\n  FROM (\n    SELECT pr.id::text AS id, pr.apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\n    FROM pricing_recommendations pr\n    JOIN apartments a ON a.id = pr.apartment_id\n    WHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\n    ORDER BY pr.date_from, pr.apartment_id\n  ) x\n)\nSELECT\n  gd.total_gaps, gd.total_estimated_loss,\n  gd.one_night_gaps, gd.two_night_gaps, gd.three_night_gaps,\n  cp.competitor_count, cp.market_min, cp.market_median, cp.market_avg, cp.market_max,\n  cs2.competitor_sources_count, cs2.active_competitors_count, cs2.excluded_competitors_count,\n  cs2.cs_market_min, cs2.cs_market_median, cs2.cs_market_avg, cs2.cs_market_max,\n  rd.recommendations_count,\n  gj.gap_windows, cpj.competitor_prices, oj.latest_observations,\n  sj.competitor_sources, rj.pricing_recommendations\nFROM gap_data gd, comp_prices cp, comp_sources cs2, rec_data rd,\n     gap_json gj, cp_json cpj, obs_json oj, sources_json sj, rec_json rj",
+        "query": "WITH gap_data AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss,\n    COUNT(*) FILTER (WHERE nights = 1) AS one_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 2) AS two_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 3) AS three_night_gaps\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_prices AS (\n  SELECT\n    COUNT(*) AS competitor_count,\n    MIN(price_per_night) AS market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n    AVG(price_per_night) AS market_avg,\n    MAX(price_per_night) AS market_max\n  FROM competitor_prices\n  WHERE date_from <= NOW() AND date_to >= NOW()\n),\ncomp_sources AS (\n  SELECT\n    COUNT(*) AS competitor_sources_count,\n    COUNT(*) FILTER (WHERE status = 'active') AS active_competitors_count,\n    COUNT(*) FILTER (WHERE status = 'excluded') AS excluded_competitors_count,\n    MIN(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_median,\n    AVG(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_avg,\n    MAX(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_max\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\nrec_data AS (\n  SELECT COUNT(*) AS recommendations_count\n  FROM pricing_recommendations\n  WHERE status IN ('draft', 'approved')\n),\ngap_json AS (\n  SELECT json_agg(row_to_json(g)) AS gap_windows\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights, estimated_loss, recommendation, status\n    FROM gap_windows WHERE status = 'open' ORDER BY gap_start, apartment_id\n  ) g\n),\ncp_json AS (\n  SELECT json_agg(row_to_json(c)) AS competitor_prices\n  FROM (\n    SELECT source, title, url, location, date_from, date_to, price_per_night, notes\n    FROM competitor_prices ORDER BY collected_at DESC LIMIT 20\n  ) c\n),\nobs_json AS (\n  SELECT COALESCE(json_agg(row_to_json(o)), '[]'::json) AS latest_observations\n  FROM (\n    SELECT cpo.id::text AS id,\n           cs.name AS competitor_name,\n           cs.similarity_score,\n           cs.source_platform,\n           cs.url AS competitor_url,\n           to_char(cpo.stay_date_from, 'YYYY-MM-DD') AS stay_date_from,\n           to_char(cpo.stay_date_to, 'YYYY-MM-DD') AS stay_date_to,\n           cpo.nights,\n           cpo.price_per_night,\n           cpo.confidence,\n           cpo.collection_method,\n           to_char(cpo.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS observed_at\n    FROM competitor_price_observations cpo\n    JOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n    ORDER BY cpo.observed_at DESC\n    LIMIT 30\n  ) o\n),\nsources_json AS (\n  SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) AS competitor_sources\n  FROM (\n    SELECT\n      cs.id::text AS id,\n      cs.name,\n      cs.source_platform,\n      cs.url,\n      cs.address,\n      cs.district,\n      cs.cohort_code,\n      cs.target_apartment_ids,\n      cs.similarity_score,\n      cs.signal_quality_score,\n      cs.discovery_status,\n      cs.status,\n      cs.priority,\n      cs.property_type,\n      cs.area_m2,\n      cs.max_guests,\n      cs.rooms,\n      cs.price_low,\n      cs.price_high,\n      cs.selection_reason,\n      cs.exclusion_reason,\n      cs.last_checked_at,\n      cs.created_at,\n      cs.updated_at,\n      (SELECT cpo.price_per_night FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price,\n      (SELECT MAX(cpo.observed_at) FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id) AS latest_observed_at\n    FROM competitor_sources cs\n    ORDER BY CASE WHEN cs.status IN ('active','approved') THEN 0 ELSE 1 END, cs.priority\n  ) s\n),\nrec_json AS (\n  SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS pricing_recommendations\n  FROM (\n    SELECT pr.id::text AS id, pr.apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       COALESCE(\n         NULLIF(TRIM(BOTH FROM (\n           SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n           FROM (\n             SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n             FROM system_vars\n             WHERE key = 'property_context_map'\n               AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n             LIMIT 1\n           ) m\n           WHERE jsonb_typeof(m.map_json) = 'object'\n         ))), ''),\n         NULLIF(TRIM(BOTH FROM COALESCE(\n           (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n           ''\n         )), '')\n       ) AS property_context,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\n    FROM pricing_recommendations pr\n    JOIN apartments a ON a.id = pr.apartment_id\n    WHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\n    ORDER BY pr.date_from, pr.apartment_id\n  ) x\n)\nSELECT\n  gd.total_gaps, gd.total_estimated_loss,\n  gd.one_night_gaps, gd.two_night_gaps, gd.three_night_gaps,\n  cp.competitor_count, cp.market_min, cp.market_median, cp.market_avg, cp.market_max,\n  cs2.competitor_sources_count, cs2.active_competitors_count, cs2.excluded_competitors_count,\n  cs2.cs_market_min, cs2.cs_market_median, cs2.cs_market_avg, cs2.cs_market_max,\n  rd.recommendations_count,\n  gj.gap_windows, cpj.competitor_prices, oj.latest_observations,\n  sj.competitor_sources, rj.pricing_recommendations\nFROM gap_data gd, comp_prices cp, comp_sources cs2, rec_data rd,\n     gap_json gj, cp_json cpj, obs_json oj, sources_json sj, rec_json rj",
         "options": {}
       },
       "id": "revenue_query",
@@ -522,7 +523,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT pr.id::text AS id, apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
+        "query": "SELECT pr.id::text AS id, apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       COALESCE(\n         NULLIF(TRIM(BOTH FROM (\n           SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n           FROM (\n             SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n             FROM system_vars\n             WHERE key = 'property_context_map'\n               AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n             LIMIT 1\n           ) m\n           WHERE jsonb_typeof(m.map_json) = 'object'\n         ))), ''),\n         NULLIF(TRIM(BOTH FROM COALESCE(\n           (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n           ''\n         )), '')\n       ) AS property_context,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
         "options": {}
       },
       "id": "pricing_recs_query",
@@ -1033,7 +1034,7 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_postgres"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
@@ -1126,7 +1127,7 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_postgres"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
@@ -1206,12 +1207,12 @@
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db",
-          "name": "gelendzhik_postgres"
+          "name": "Gelendzhik DB"
         }
       },
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'id', al.id::text,\n        'recommendation_id', al.recommendation_id::text,\n        'action', al.action,\n        'previous_status', al.previous_status,\n        'new_status', al.new_status,\n        'apartment_id', al.apartment_id,\n        'date_from', to_char(al.date_from, 'YYYY-MM-DD'),\n        'date_to', to_char(al.date_to, 'YYYY-MM-DD'),\n        'old_price', al.old_price::float,\n        'new_price', al.new_price::float,\n        'reason', al.reason,\n        'actor', al.actor,\n        'source', al.source,\n        'created_at', to_char(al.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')\n      )\n      ORDER BY al.created_at DESC\n    ),\n    '[]'::json\n  ) AS audit_data,\n  COUNT(*)::integer AS total\nFROM (\n  SELECT * FROM pricing_action_audit_log\n  ORDER BY created_at DESC LIMIT 50\n) al",
+        "query": "SELECT\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'id', al.id::text,\n        'recommendation_id', al.recommendation_id::text,\n        'action', al.action,\n        'previous_status', al.previous_status,\n        'new_status', al.new_status,\n        'apartment_id', al.apartment_id,\n        'date_from', to_char(al.date_from, 'YYYY-MM-DD'),\n        'date_to', to_char(al.date_to, 'YYYY-MM-DD'),\n        'old_price', al.old_price::float,\n        'new_price', al.new_price::float,\n        'reason', al.reason,\n        'actor', al.actor,\n        'source', al.source,\n        'metadata', al.metadata,\n        'created_at', to_char(al.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')\n      )\n      ORDER BY al.created_at DESC\n    ),\n    '[]'::json\n  ) AS audit_data,\n  COUNT(*)::integer AS total\nFROM (\n  SELECT * FROM pricing_action_audit_log\n  ORDER BY created_at DESC LIMIT 50\n) al",
         "options": {}
       }
     },
@@ -1782,7 +1783,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH rec_status AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,\n    COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,\n    COUNT(*) FILTER (WHERE status = 'exported') AS exported_count,\n    COUNT(*) FILTER (WHERE status = 'manually_applied') AS manually_applied_count,\n    COUNT(*) FILTER (WHERE status = 'apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_summary AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_stats AS (\n  SELECT\n    COUNT(*) FILTER (WHERE cs.status = 'active') AS active_competitors,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at < NOW() - INTERVAL '14 days'\n    ) AS stale_obs,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at >= NOW() - INTERVAL '14 days'\n    ) AS fresh_obs,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night)\n      FILTER (WHERE cs.status = 'active' AND cs.similarity_score >= 80) AS market_median\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\ntop_gaps AS (\n  SELECT COALESCE(json_agg(row_to_json(g) ORDER BY (g.estimated_loss) DESC NULLS LAST), '[]'::json) AS data\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights,\n           COALESCE(estimated_loss, 0) AS estimated_loss, recommendation\n    FROM gap_windows\n    WHERE status = 'open'\n    ORDER BY estimated_loss DESC NULLS LAST\n    LIMIT 3\n  ) g\n),\ntop_recs AS (\n  SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) AS data\n  FROM (\n    SELECT id::text AS id, apartment_id,\n           to_char(date_from,'YYYY-MM-DD') AS date_from,\n           to_char(date_to,'YYYY-MM-DD') AS date_to,\n           nights,\n           recommended_price::float, current_price::float, market_median::float,\n           recommended_guest_price::float AS recommended_guest_price,\n           rc_net_price::float AS rc_net_price,\n           aggregator_markup_percent::float AS aggregator_markup_percent,\n           expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n           direct_price::float AS direct_price,\n           direct_savings_for_guest::float AS direct_savings_for_guest,\n           direct_owner_gain::float AS direct_owner_gain,\n           pricing_channel,\n           recommendation_type, reason, status, confidence::float AS confidence\n    FROM pricing_recommendations\n    WHERE status IN ('draft', 'approved', 'exported', 'apply_failed')\n    ORDER BY\n      CASE status\n        WHEN 'apply_failed' THEN 1\n        WHEN 'exported' THEN 2\n        WHEN 'approved' THEN 3\n        WHEN 'draft' THEN 4\n        ELSE 5\n      END,\n      created_at DESC\n    LIMIT 5\n  ) r\n),\nlatest_audit AS (\n  SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) AS data\n  FROM (\n    SELECT id, action, previous_status, new_status,\n           apartment_id, date_from, date_to, old_price, new_price,\n           reason, actor, created_at\n    FROM pricing_action_audit_log\n    ORDER BY created_at DESC\n    LIMIT 5\n  ) a\n)\nSELECT\n  rs.draft_count, rs.approved_count, rs.exported_count,\n  rs.manually_applied_count, rs.apply_failed_count,\n  gs.total_gaps, gs.total_estimated_loss,\n  cs.active_competitors, cs.stale_obs, cs.fresh_obs, cs.market_median,\n  tg.data AS top_gaps,\n  tr.data AS top_recs,\n  la.data AS latest_audit,\n  (SELECT value FROM system_vars WHERE key = 'aggregator_markup_percent' LIMIT 1) AS aggregator_markup_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_discount_percent' LIMIT 1) AS direct_discount_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_booking_enabled' LIMIT 1) AS direct_booking_enabled_var\nFROM rec_status rs, gap_summary gs, comp_stats cs,\n     top_gaps tg, top_recs tr, latest_audit la",
+        "query": "WITH rec_status AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,\n    COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,\n    COUNT(*) FILTER (WHERE status = 'exported') AS exported_count,\n    COUNT(*) FILTER (WHERE status = 'manually_applied') AS manually_applied_count,\n    COUNT(*) FILTER (WHERE status = 'apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_summary AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_stats AS (\n  SELECT\n    COUNT(*) FILTER (WHERE cs.status = 'active') AS active_competitors,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at < NOW() - INTERVAL '14 days'\n    ) AS stale_obs,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at >= NOW() - INTERVAL '14 days'\n    ) AS fresh_obs,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night)\n      FILTER (WHERE cs.status = 'active' AND cs.similarity_score >= 80) AS market_median\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\ntop_gaps AS (\n  SELECT COALESCE(json_agg(row_to_json(g) ORDER BY (g.estimated_loss) DESC NULLS LAST), '[]'::json) AS data\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights,\n           COALESCE(estimated_loss, 0) AS estimated_loss, recommendation\n    FROM gap_windows\n    WHERE status = 'open'\n    ORDER BY estimated_loss DESC NULLS LAST\n    LIMIT 3\n  ) g\n),\ntop_recs AS (\n  SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) AS data\n  FROM (\n    SELECT id::text AS id, apartment_id,\n           to_char(date_from,'YYYY-MM-DD') AS date_from,\n           to_char(date_to,'YYYY-MM-DD') AS date_to,\n           nights,\n           recommended_price::float, current_price::float, market_median::float,\n           recommended_guest_price::float AS recommended_guest_price,\n           rc_net_price::float AS rc_net_price,\n           aggregator_markup_percent::float AS aggregator_markup_percent,\n           expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n           direct_price::float AS direct_price,\n           direct_savings_for_guest::float AS direct_savings_for_guest,\n           direct_owner_gain::float AS direct_owner_gain,\n           pricing_channel,\n           COALESCE(\n             NULLIF(TRIM(BOTH FROM (\n               SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n               FROM (\n                 SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n                 FROM system_vars\n                 WHERE key = 'property_context_map'\n                   AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n                 LIMIT 1\n               ) m\n               WHERE jsonb_typeof(m.map_json) = 'object'\n             ))), ''),\n             NULLIF(TRIM(BOTH FROM COALESCE(\n               (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n               ''\n             )), '')\n           ) AS property_context,\n           recommendation_type, reason, status, confidence::float AS confidence\n    FROM pricing_recommendations pr\n    WHERE status IN ('draft', 'approved', 'exported', 'apply_failed')\n    ORDER BY\n      CASE status\n        WHEN 'apply_failed' THEN 1\n        WHEN 'exported' THEN 2\n        WHEN 'approved' THEN 3\n        WHEN 'draft' THEN 4\n        ELSE 5\n      END,\n      created_at DESC\n    LIMIT 5\n  ) r\n),\nlatest_audit AS (\n  SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) AS data\n  FROM (\n    SELECT id, action, previous_status, new_status,\n           apartment_id, date_from, date_to, old_price, new_price,\n           reason, actor, created_at\n    FROM pricing_action_audit_log\n    ORDER BY created_at DESC\n    LIMIT 5\n  ) a\n)\nSELECT\n  rs.draft_count, rs.approved_count, rs.exported_count,\n  rs.manually_applied_count, rs.apply_failed_count,\n  gs.total_gaps, gs.total_estimated_loss,\n  cs.active_competitors, cs.stale_obs, cs.fresh_obs, cs.market_median,\n  tg.data AS top_gaps,\n  tr.data AS top_recs,\n  la.data AS latest_audit,\n  (SELECT value FROM system_vars WHERE key = 'aggregator_markup_percent' LIMIT 1) AS aggregator_markup_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_discount_percent' LIMIT 1) AS direct_discount_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_booking_enabled' LIMIT 1) AS direct_booking_enabled_var\nFROM rec_status rs, gap_summary gs, comp_stats cs,\n     top_gaps tg, top_recs tr, latest_audit la",
         "options": {}
       },
       "id": "revenue-dashboard-query",
@@ -2328,6 +2329,426 @@
           "responseCode": 200
         }
       }
+    },
+    {
+      "id": "pcs-if-act",
+      "name": "If Property Context Settings",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        930,
+        450
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "pcs-a1",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "property_context_settings"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pcs-co-entry",
+      "name": "PCS Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst modeRaw = body.mode != null ? String(body.mode).trim().toLowerCase() : '';\nconst mode = modeRaw === '' ? 'get' : modeRaw;\nif (mode !== 'get' && mode !== 'save') {\n  return [{ json: { pcs_ok: false, pcs_error: 'mode must be get or save', pcs_http: 400 } }];\n}\nif (mode === 'get') {\n  return [{ json: { pcs_ok: true, pcs_mode: 'get', pcs_http: 200 } }];\n}\n\nlet m = body.property_context_map;\nif (m == null) m = {};\nif (typeof m !== 'object' || Array.isArray(m)) {\n  return [{ json: { pcs_ok: false, pcs_error: 'property_context_map must be a JSON object', pcs_http: 400 } }];\n}\nconst out = {};\nfor (const k of Object.keys(m)) {\n  const ks = String(k).trim();\n  if (!ks) continue;\n  const val = m[k];\n  let vs = '';\n  if (val != null && (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean')) {\n    vs = String(val).trim();\n  } else if (val != null) {\n    return [{ json: { pcs_ok: false, pcs_error: 'map values must be string-like', pcs_http: 400 } }];\n  }\n  if (!vs) continue;\n  out[ks] = vs;\n}\n\ntry {\n  JSON.stringify(out);\n} catch (e) {\n  return [{ json: { pcs_ok: false, pcs_error: 'map serialization failed', pcs_http: 400 } }];\n}\n\nconst defTrim = body.default_property_context == null ? '' : String(body.default_property_context).trim();\n\nreturn [{\n  json: {\n    pcs_ok: true,\n    pcs_mode: 'save',\n    pcs_http: 200,\n    property_context_map_normalized: out,\n    default_property_context_normalized: defTrim,\n  },\n}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "pcs-if-ok",
+      "name": "PCS If Ok",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1370,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "pcs-ok",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.pcs_ok }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pcs-res-bad",
+      "name": "PCS Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        260
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.pcs_error || \"invalid_request\" }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "pcs-if-get",
+      "name": "PCS If Get",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "pcs-g",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.pcs_mode }}",
+              "rightValue": "get"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pcs-pg-read",
+      "name": "PCS Get Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1780,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT key, value FROM system_vars WHERE key IN ('property_context_map', 'default_property_context') ORDER BY key;",
+        "options": {}
+      }
+    },
+    {
+      "id": "pcs-co-read-fmt",
+      "name": "PCS Format Get",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst mapRow = rows.find(r => r.key === 'property_context_map');\nconst defRow = rows.find(r => r.key === 'default_property_context');\nlet mapObj = {};\nif (mapRow?.value != null && String(mapRow.value).trim() !== '') {\n  try {\n    const parsed = JSON.parse(String(mapRow.value));\n    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {\n      for (const [k, v] of Object.entries(parsed)) {\n        const ks = String(k).trim();\n        if (!ks) continue;\n        let vs = v == null ? '' : String(v).trim();\n        if (!vs) continue;\n        mapObj[ks] = vs;\n      }\n    }\n  } catch (_) {\n    mapObj = {};\n  }\n}\nlet dr = defRow?.value != null ? String(defRow.value) : '';\ndr = dr.trim();\nreturn [{\n  json: {\n    ok: true,\n    property_context_map: mapObj,\n    default_property_context: dr === '' ? null : dr,\n  },\n}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "pcs-res-get",
+      "name": "PCS Respond Get",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, property_context_map: $json.property_context_map, default_property_context: $json.default_property_context }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "pcs-pg-save",
+      "name": "PCS Save Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2100,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.q_save_sql }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "pcs-co-save-fmt",
+      "name": "PCS Format Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        600
+      ],
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ok: true,\n    action: 'property_context_settings',\n    mode: 'save',\n    message: 'saved',\n    audit_recorded: true,\n  },\n}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "pcs-res-save",
+      "name": "PCS Respond Save",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        600
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'property_context_settings', mode: 'save', message: $json.message, audit_recorded: $json.audit_recorded }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "pcs-pg-prev-save",
+      "name": "PCS Prev For Save",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1660,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COALESCE(MAX(CASE WHEN key = 'property_context_map' THEN value END), '') AS map_val,\n  COALESCE(MAX(CASE WHEN key = 'default_property_context' THEN value END), '') AS def_val\nFROM system_vars\nWHERE key IN ('property_context_map', 'default_property_context');",
+        "options": {}
+      }
+    },
+    {
+      "id": "pcs-co-build-audit",
+      "name": "PCS Save Build Audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        600
+      ],
+      "parameters": {
+        "jsCode": "const prevRow = $input.first().json;\nconst entry = $('PCS Entry').first().json;\n\nfunction parseMapVal(raw) {\n  if (raw == null || String(raw).trim() === '') return {};\n  try {\n    const p = JSON.parse(String(raw));\n    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};\n    const o = {};\n    for (const [k, v] of Object.entries(p)) {\n      const ks = String(k).trim();\n      const vs = v == null ? '' : String(v).trim();\n      if (!ks || !vs) continue;\n      o[ks] = vs;\n    }\n    return o;\n  } catch (_) {\n    return {};\n  }\n}\n\nconst prevMap = parseMapVal(prevRow.map_val);\nconst prevDefRaw = prevRow.def_val != null ? String(prevRow.def_val) : '';\nconst prevDef = prevDefRaw.trim();\n\nconst nextMap = entry.property_context_map_normalized || {};\nconst nextDefRaw = entry.default_property_context_normalized != null\n  ? String(entry.default_property_context_normalized) : '';\nconst nextDef = nextDefRaw.trim();\n\nconst prevKeys = new Set(Object.keys(prevMap));\nconst nextKeys = new Set(Object.keys(nextMap));\nconst sortStr = (a) => a.slice().sort();\nconst added_keys = sortStr([...nextKeys].filter((k) => !prevKeys.has(k)));\nconst removed_keys = sortStr([...prevKeys].filter((k) => !nextKeys.has(k)));\nconst changed_keys = sortStr([...nextKeys].filter((k) => {\n  if (!prevKeys.has(k)) return false;\n  return prevMap[k] !== nextMap[k];\n}));\nconst unchanged_keys_count = [...nextKeys].filter(\n  (k) => prevKeys.has(k) && prevMap[k] === nextMap[k],\n).length;\n\nconst meta = {\n  event_type: 'property_context_settings_save',\n  source: 'admin_api',\n  setting: 'property_context_map',\n  previous_property_context_map: prevMap,\n  next_property_context_map: nextMap,\n  previous_default_property_context: prevDef === '' ? null : prevDef,\n  next_default_property_context: nextDef === '' ? null : nextDef,\n  added_keys,\n  changed_keys,\n  removed_keys,\n  unchanged_keys_count,\n  previous_size: Object.keys(prevMap).length,\n  next_size: Object.keys(nextMap).length,\n};\n\nconst escapeSql = (s) => String(s).replace(/'/g, \"''\");\n\nlet metaJsonEsc;\ntry {\n  metaJsonEsc = escapeSql(JSON.stringify(meta));\n} catch (e) {\n  throw new Error('pcs_audit_meta_failed');\n}\n\nlet mapJson;\ntry {\n  mapJson = JSON.stringify(nextMap);\n} catch (e) {\n  throw new Error('pcs_map_json_failed');\n}\n\nconst sqlMap = \"'\" + escapeSql(mapJson) + \"'\";\nconst sqlDef = \"'\" + escapeSql(nextDef) + \"'\";\n\nconst q_save_sql =\n  \"INSERT INTO system_vars (key, value, description, updated_at) VALUES (\" +\n  \"'property_context_map', \" + sqlMap + \", 'JSON map: apartment_id -> property_context for direct offers', NOW()) \" +\n  \"ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_at = NOW(); \" +\n  \"INSERT INTO system_vars (key, value, description, updated_at) VALUES (\" +\n  \"'default_property_context', \" + sqlDef + \", 'Fallback property context for direct offers', NOW()) \" +\n  \"ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description, updated_at = NOW();\";\n\nconst q_audit_sql =\n  \"INSERT INTO pricing_action_audit_log (\" +\n  \"recommendation_id, action, previous_status, new_status, apartment_id, date_from, date_to, \" +\n  \"old_price, new_price, reason, actor, source, metadata\" +\n  \") VALUES (\" +\n  \"NULL, 'property_context_settings_save', NULL, NULL, NULL, NULL, NULL, \" +\n  \"NULL, NULL, 'property_context_settings_save', 'admin_api', 'admin_panel', \" +\n  \"'\" + metaJsonEsc + \"'::jsonb\" +\n  \");\";\n\nreturn [{\n  json: {\n    pcs_ok: true,\n    pcs_mode: 'save',\n    pcs_http: 200,\n    q_save_sql: q_save_sql + q_audit_sql,\n    audit_meta: meta,\n  },\n}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "mrl-if-act",
+      "name": "If Manual Referral Lead",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        930,
+        620
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "mrl-a1",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "manual_referral_lead"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mrl-entry",
+      "name": "MRL Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        570
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst modeRaw = body.mode != null ? String(body.mode).trim().toLowerCase() : '';\nif (modeRaw !== 'save') {\n  return [{ json: { mrl_ok: false, mrl_error: 'mode must be save', mrl_http: 400 } }];\n}\n\nfunction trimStr(v) {\n  if (v == null) return null;\n  const s = String(v).trim();\n  return s === '' ? null : s;\n}\nfunction posNum(v) {\n  if (v == null || v === '') return null;\n  const n = Number(v);\n  if (!Number.isFinite(n) || n <= 0) return null;\n  return Math.round(n);\n}\n\nconst referrer_name = trimStr(body.referrer_name);\nconst referrer_contact = trimStr(body.referrer_contact);\nconst referred_guest_name = trimStr(body.referred_guest_name);\nconst referred_guest_contact = trimStr(body.referred_guest_contact);\n\nif (!referrer_name && !referrer_contact) {\n  return [{ json: { mrl_ok: false, mrl_error: 'referrer name or contact required', mrl_http: 400 } }];\n}\nif (!referred_guest_name && !referred_guest_contact) {\n  return [{ json: { mrl_ok: false, mrl_error: 'referred guest name or contact required', mrl_http: 400 } }];\n}\n\nconst rawReward = body.referral_reward;\nlet referral_reward = null;\nif (rawReward != null && rawReward !== '') {\n  const n = Number(rawReward);\n  if (!Number.isFinite(n) || n < 0) {\n    return [{ json: { mrl_ok: false, mrl_error: 'referral_reward must be a non-negative number', mrl_http: 400 } }];\n  }\n  if (n > 0) referral_reward = Math.round(n);\n}\n\nconst referral_price = posNum(body.referral_price);\nconst referral_owner_net = posNum(body.referral_owner_net);\nconst referral_guest_savings = posNum(body.referral_guest_savings);\nconst referral_owner_gain_vs_aggregator = posNum(body.referral_owner_gain_vs_aggregator);\nconst economics_available = referral_price != null && referral_reward != null;\n\nconst meta = {\n  event_type: 'manual_referral_lead',\n  economics_available,\n  apartment_id: trimStr(body.apartment_id) ?? (body.apartment_id != null && String(body.apartment_id).trim() !== '' ? String(body.apartment_id).trim() : null),\n  apartment_name: trimStr(body.apartment_name),\n  date_from: trimStr(body.date_from),\n  date_to: trimStr(body.date_to),\n  referrer_name,\n  referrer_contact,\n  referred_guest_name,\n  referred_guest_contact,\n  notes: trimStr(body.notes),\n};\n\nif (economics_available) {\n  meta.referral_price = referral_price;\n  meta.referral_reward = referral_reward;\n  if (referral_owner_net != null) meta.referral_owner_net = referral_owner_net;\n  if (referral_guest_savings != null) meta.referral_guest_savings = referral_guest_savings;\n  if (referral_owner_gain_vs_aggregator != null) meta.referral_owner_gain_vs_aggregator = referral_owner_gain_vs_aggregator;\n}\n\nreturn [{\n  json: {\n    mrl_ok: true,\n    mrl_http: 200,\n    metadata: meta,\n    apartment_id: meta.apartment_id,\n    date_from: meta.date_from,\n    date_to: meta.date_to,\n  },\n}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "mrl-if-ok",
+      "name": "MRL If Ok",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1370,
+        570
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "mrl-ok",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.mrl_ok }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mrl-res-bad",
+      "name": "MRL Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        430
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.mrl_error || \"invalid_request\" }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "mrl-co-build",
+      "name": "MRL Build Audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        700
+      ],
+      "parameters": {
+        "jsCode": "const entry = $('MRL Entry').first().json;\nconst escapeSql = (s) => String(s).replace(/'/g, \"''\");\nlet metaJsonEsc;\ntry {\n  metaJsonEsc = escapeSql(JSON.stringify(entry.metadata));\n} catch (e) {\n  throw new Error('mrl_audit_meta_failed');\n}\n\nconst aptId = entry.apartment_id;\nlet sqlApt = 'NULL';\nif (aptId != null) {\n  const n = Number(aptId);\n  if (Number.isFinite(n) && n > 0) sqlApt = String(Math.round(n));\n}\n\nconst df = entry.date_from;\nconst dt = entry.date_to;\nconst sqlDf = df ? \"'\" + escapeSql(df) + \"'::date\" : 'NULL';\nconst sqlDt = dt ? \"'\" + escapeSql(dt) + \"'::date\" : 'NULL';\n\nconst q_audit_sql =\n  \"INSERT INTO pricing_action_audit_log (\" +\n  \"recommendation_id, action, previous_status, new_status, apartment_id, date_from, date_to, \" +\n  \"old_price, new_price, reason, actor, source, metadata\" +\n  \") VALUES (\" +\n  \"NULL, 'manual_referral_lead_logged', NULL, NULL, \" + sqlApt + \", \" + sqlDf + \", \" + sqlDt + \", \" +\n  \"NULL, NULL, 'manual_referral_lead_logged', 'admin_api', 'admin_panel', \" +\n  \"'\" + metaJsonEsc + \"'::jsonb\" +\n  \") RETURNING id::text AS audit_id;\";\n\nreturn [{ json: { mrl_ok: true, q_audit_sql } }];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "mrl-pg-ins",
+      "name": "MRL Audit Insert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1780,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.q_audit_sql }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "mrl-co-fmt",
+      "name": "MRL Format Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        700
+      ],
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\nreturn [{\n  json: {\n    ok: true,\n    action: 'manual_referral_lead',\n    mode: 'save',\n    audit_recorded: true,\n    audit_id: row?.audit_id ?? null,\n  },\n}];",
+        "mode": "runOnceForAllItems"
+      }
+    },
+    {
+      "id": "mrl-res-ok",
+      "name": "MRL Respond Save",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2220,
+        700
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'manual_referral_lead', mode: 'save', audit_recorded: $json.audit_recorded, audit_id: $json.audit_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
     }
   ],
   "connections": {
@@ -2484,7 +2905,7 @@
         ],
         [
           {
-            "node": "If Revenue",
+            "node": "If Property Context Settings",
             "type": "main",
             "index": 0
           }
@@ -3458,15 +3879,221 @@
           }
         ]
       ]
+    },
+    "If Property Context Settings": {
+      "main": [
+        [
+          {
+            "node": "PCS Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Manual Referral Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Manual Referral Lead": {
+      "main": [
+        [
+          {
+            "node": "MRL Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MRL Entry": {
+      "main": [
+        [
+          {
+            "node": "MRL If Ok",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MRL If Ok": {
+      "main": [
+        [
+          {
+            "node": "MRL Build Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MRL Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MRL Build Audit": {
+      "main": [
+        [
+          {
+            "node": "MRL Audit Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MRL Audit Insert": {
+      "main": [
+        [
+          {
+            "node": "MRL Format Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MRL Format Save": {
+      "main": [
+        [
+          {
+            "node": "MRL Respond Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Entry": {
+      "main": [
+        [
+          {
+            "node": "PCS If Ok",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS If Ok": {
+      "main": [
+        [
+          {
+            "node": "PCS If Get",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PCS Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS If Get": {
+      "main": [
+        [
+          {
+            "node": "PCS Get Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PCS Prev For Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Get Query": {
+      "main": [
+        [
+          {
+            "node": "PCS Format Get",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Format Get": {
+      "main": [
+        [
+          {
+            "node": "PCS Respond Get",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Save Query": {
+      "main": [
+        [
+          {
+            "node": "PCS Format Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Format Save": {
+      "main": [
+        [
+          {
+            "node": "PCS Respond Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Prev For Save": {
+      "main": [
+        [
+          {
+            "node": "PCS Save Build Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PCS Save Build Audit": {
+      "main": [
+        [
+          {
+            "node": "PCS Save Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1"
   },
-  "staticData": null,
-  "tags": [],
-  "triggerCount": 0,
-  "updatedAt": "2026-05-10T00:00:00.000Z",
-  "versionId": "a1-admin-api-v2",
-  "active": true
+  "staticData": null
 }

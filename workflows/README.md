@@ -18,3 +18,5 @@
 2. Привязать Credentials (Telegram, PostgreSQL, Claude, Sheets)
 3. Заменить плейсхолдеры (OWNER_CHAT_ID и т.д.)
 4. Активировать (переключатель Active вверху справа)
+
+Получение **`property_context`** для revenue/recommendations: ключи **`property_context_map`** и **`default_property_context`** в таблице `system_vars` (см. [docs/CUSTOMIZATION.md](../docs/CUSTOMIZATION.md)).

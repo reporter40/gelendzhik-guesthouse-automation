@@ -1,6 +1,7 @@
 {
+  "id": "93d5d874-3a76-4db6-8697-fe2129fb4fc0",
   "name": "13 — Competitor Monitor",
-  "active": false,
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -202,9 +203,5 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "staticData": null,
-  "meta": {
-    "templateCredsSetupCompleted": true
-  },
-  "pinData": {}
+  "staticData": null
 }

@@ -1,0 +1,69 @@
+{
+  "id": "smoketest1234abcd",
+  "name": "99 — Owner Bot Smoke Test",
+  "active": false,
+  "nodes": [
+    {
+      "id": "trig01",
+      "name": "TelegramTrigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "send01",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "text": "Бот подключен. Тест успешен.",
+        "chatId": "={{ $json.message.chat.id }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
+        }
+      },
+      "typeVersion": 1.2
+    }
+  ],
+  "connections": {
+    "TelegramTrigger": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

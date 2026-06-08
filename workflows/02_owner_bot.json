@@ -1,5 +1,7 @@
 {
+  "id": "c9a5874f34e45e4d",
   "name": "02 — Owner Bot (Voice + Ollama)",
+  "active": true,
   "nodes": [
     {
       "id": "t1",
@@ -419,5 +421,6 @@
       ]
     }
   },
-  "id": "c9a5874f34e45e4d"
+  "settings": null,
+  "staticData": null
 }

@@ -1,5 +1,7 @@
 {
+  "id": "c78bcb577baa7ffe",
   "name": "04 — Daily Pricing (Auto-Update RC)",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -16,7 +18,10 @@
       "name": "Daily 06:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [100, 300]
+      "position": [
+        100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -26,7 +31,10 @@
       "name": "Property Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [300, 300]
+      "position": [
+        300,
+        300
+      ]
     },
     {
       "parameters": {
@@ -36,7 +44,10 @@
       "name": "Pricing Logic",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [500, 300]
+      "position": [
+        500,
+        300
+      ]
     },
     {
       "parameters": {
@@ -51,7 +62,10 @@
       "name": "Update RC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [700, 300],
+      "position": [
+        700,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "realty_calendar_v1"
@@ -62,15 +76,43 @@
   ],
   "connections": {
     "Daily 06:00": {
-      "main": [[{"node": "Property Data", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Property Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Property Data": {
-      "main": [[{"node": "Pricing Logic", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Pricing Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Pricing Logic": {
-      "main": [[{"node": "Update RC", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Update RC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "id": "c78bcb577baa7ffe",
-  "active": false
+  "settings": null,
+  "staticData": {
+    "node:Daily 06:00": {
+      "recurrenceRules": []
+    }
+  }
 }

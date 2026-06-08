@@ -1,5 +1,7 @@
 {
+  "id": "af40ef5656b78bc0",
   "name": "03 — Guest Journey (Automated Touchpoints)",
+  "active": true,
   "nodes": [
     {
       "id": "t1",
@@ -350,5 +352,10 @@
       ]
     }
   },
-  "id": "af40ef5656b78bc0"
+  "settings": null,
+  "staticData": {
+    "node:Hourly Check": {
+      "recurrenceRules": []
+    }
+  }
 }

@@ -1,5 +1,7 @@
 {
+  "id": "31f66ba2b251b54c",
   "name": "08 — RC Webhooks Handler",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -11,7 +13,10 @@
       "name": "RC Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "webhookId": "realty_calendar_sync_hook"
     },
     {
@@ -29,7 +34,10 @@
       "name": "Is Delete?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [300, 200]
+      "position": [
+        300,
+        200
+      ]
     },
     {
       "parameters": {
@@ -64,9 +72,14 @@
       "name": "Update DataBase (Delete)",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [500, 100],
+      "position": [
+        500,
+        100
+      ],
       "credentials": {
-        "postgres": {"id": "gelendzhik_db"}
+        "postgres": {
+          "id": "gelendzhik_db"
+        }
       }
     },
     {
@@ -84,7 +97,10 @@
       "name": "Is Create?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [500, 300]
+      "position": [
+        500,
+        300
+      ]
     },
     {
       "parameters": {
@@ -94,7 +110,10 @@
       "name": "Format Booking",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 300]
+      "position": [
+        700,
+        300
+      ]
     },
     {
       "parameters": {
@@ -114,16 +133,26 @@
         },
         "options": {
           "conflictTarget": "rc_id",
-          "updateColumns": ["status", "checkin_date", "checkout_date", "price"]
+          "updateColumns": [
+            "status",
+            "checkin_date",
+            "checkout_date",
+            "price"
+          ]
         }
       },
       "id": "db2",
       "name": "Save to Postgres",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [900, 300],
+      "position": [
+        900,
+        300
+      ],
       "credentials": {
-        "postgres": {"id": "gelendzhik_db"}
+        "postgres": {
+          "id": "gelendzhik_db"
+        }
       },
       "onError": "continueRegularOutput"
     },
@@ -135,7 +164,10 @@
       "name": "Format for Sheets",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1050, 300]
+      "position": [
+        1050,
+        300
+      ]
     },
     {
       "parameters": {
@@ -160,7 +192,10 @@
       "name": "Append to Google Sheets",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
-      "position": [1250, 300],
+      "position": [
+        1250,
+        300
+      ],
       "credentials": {
         "googleApi": {
           "id": "google_service_account"
@@ -170,29 +205,80 @@
   ],
   "connections": {
     "RC Webhook": {
-      "main": [[{"node": "Is Delete?", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Is Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Is Delete?": {
       "main": [
-        [{"node": "Update DataBase (Delete)", "type": "main", "index": 0}],
-        [{"node": "Is Create?", "type": "main", "index": 0}]
+        [
+          {
+            "node": "Update DataBase (Delete)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Is Create?": {
       "main": [
-        [{"node": "Format Booking", "type": "main", "index": 0}],
+        [
+          {
+            "node": "Format Booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     },
     "Format Booking": {
-      "main": [[{"node": "Save to Postgres", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Save to Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Save to Postgres": {
-      "main": [[{"node": "Format for Sheets", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Format for Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Format for Sheets": {
-      "main": [[{"node": "Append to Google Sheets", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "id": "31f66ba2b251b54c"
+  "settings": null,
+  "staticData": null
 }

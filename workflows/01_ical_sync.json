@@ -1,5 +1,7 @@
 {
+  "id": "4a846531ec22acc6",
   "name": "01 — RC iCal Sync",
+  "active": true,
   "nodes": [
     {
       "id": "t1",
@@ -177,13 +179,9 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "tags": [
-    {
-      "name": "ical"
-    },
-    {
-      "name": "sync"
+  "staticData": {
+    "node:Every 30 Minutes": {
+      "recurrenceRules": []
     }
-  ],
-  "id": "4a846531ec22acc6"
+  }
 }

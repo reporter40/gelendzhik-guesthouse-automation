@@ -1,9 +1,7 @@
 {
   "id": "guestonboard1234",
   "name": "09 — Guest Onboarding Bot",
-  "settings": {
-    "executionOrder": "v1"
-  },
+  "active": true,
   "nodes": [
     {
       "id": "trig01",
@@ -360,5 +358,9 @@
         ]
       ]
     }
-  }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
 }

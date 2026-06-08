@@ -1,68 +1,103 @@
 {
+  "id": "eb7a16cfd8bfd3b4",
   "name": "05 — Weekly Report (Sunday Digest)",
+  "active": true,
   "nodes": [
     {
+      "id": "t1",
+      "name": "Sunday 20:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        100,
+        300
+      ],
       "parameters": {
         "rule": {
           "interval": [
             {
               "field": "weeks",
-              "weeksInterval": 1,
-              "triggerAtDay": [0],
-              "triggerAtHour": 20
+              "triggerAtDay": [
+                0
+              ],
+              "triggerAtHour": 20,
+              "weeksInterval": 1
             }
           ]
         }
       },
-      "id": "t1",
-      "name": "Sunday 20:00",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [100, 300]
+      "typeVersion": 1.2
     },
     {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT count(*) as total, COALESCE(sum(price), 0) as revenue FROM bookings WHERE created_at >= now() - interval '7 days';"
-      },
       "id": "db1",
       "name": "Weekly Stats",
       "type": "n8n-nodes-base.postgres",
-      "typeVersion": 1,
-      "position": [400, 300],
+      "position": [
+        400,
+        300
+      ],
+      "parameters": {
+        "query": "SELECT count(*) as total, COALESCE(sum(price), 0) as revenue FROM bookings WHERE created_at >= now() - interval '7 days';",
+        "operation": "executeQuery"
+      },
       "credentials": {
         "postgres": {
           "id": "gelendzhik_db"
         }
-      }
+      },
+      "typeVersion": 1
     },
     {
-      "parameters": {
-        "chatId": "={{ $env.OWNER_CHAT_ID }}",
-        "text": "=📊 *Отчет за неделю*\n\nБронирований: {{ $json.total }}\nВыручка: {{ $json.revenue }}₽\n\nПриятного отдыха!",
-        "additionalFields": {
-          "parseMode": "Markdown"
-        }
-      },
       "id": "r1",
       "name": "Send Owner",
       "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
-      "position": [650, 300],
+      "position": [
+        650,
+        300
+      ],
+      "parameters": {
+        "text": "=📊 *Отчет за неделю*\n\nБронирований: {{ $json.total }}\nВыручка: {{ $json.revenue }}₽\n\nПриятного отдыха!",
+        "chatId": "={{ $env.OWNER_CHAT_ID }}",
+        "additionalFields": {
+          "parseMode": "Markdown",
+          "appendAttribution": false
+        }
+      },
       "credentials": {
         "telegramApi": {
           "id": "telegram_owner_bot"
         }
-      }
+      },
+      "typeVersion": 1.1
     }
   ],
   "connections": {
     "Sunday 20:00": {
-      "main": [[{"node": "Weekly Stats", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Weekly Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Weekly Stats": {
-      "main": [[{"node": "Send Owner", "type": "main", "index": 0}]]
+      "main": [
+        [
+          {
+            "node": "Send Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "id": "eb7a16cfd8bfd3b4"
+  "settings": null,
+  "staticData": {
+    "node:Sunday 20:00": {
+      "recurrenceRules": []
+    }
+  }
 }
