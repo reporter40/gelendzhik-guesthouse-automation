@@ -1,0 +1,132 @@
+{
+  "id": "15-content-autopost",
+  "name": "15 — Content Autopost",
+  "active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "name": "Mon Wed Fri 11:00 MSK",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 8 * * 1,3,5" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pick_post",
+      "name": "Pick Next Post",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [350, 300],
+      "credentials": {
+        "postgres": { "id": "gelendzhik_db", "name": "Gelendzhik DB" }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, slug, content FROM marketing_posts WHERE status='queued' ORDER BY id ASC LIMIT 1;",
+        "options": {}
+      }
+    },
+    {
+      "id": "guard_empty",
+      "name": "Has Post?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.id }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "load_channel",
+      "name": "Load Channel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [850, 200],
+      "credentials": {
+        "postgres": { "id": "gelendzhik_db", "name": "Gelendzhik DB" }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT telegram_chat_id, utm_source FROM marketing_channels WHERE platform='telegram' AND telegram_chat_id IS NOT NULL AND is_active=true LIMIT 1;",
+        "options": {}
+      }
+    },
+    {
+      "id": "post_telegram",
+      "name": "Post to Channel",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram_owner_bot",
+          "name": "Telegram Owner Bot"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Load Channel').first().json.telegram_chat_id }}",
+        "text": "={{ $('Pick Next Post').first().json.content }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": false
+        }
+      }
+    },
+    {
+      "id": "mark_posted",
+      "name": "Mark Posted",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1350, 200],
+      "credentials": {
+        "postgres": { "id": "gelendzhik_db", "name": "Gelendzhik DB" }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE marketing_posts SET status='posted', posted_at=NOW(), telegram_message_id=$1, telegram_chat_id=$2 WHERE id=$3;",
+        "options": {
+          "queryReplacement": "={{ $('Post to Channel').first().json.message_id }},={{ $('Post to Channel').first().json.chat.id }},={{ $('Pick Next Post').first().json.id }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Mon Wed Fri 11:00 MSK": {
+      "main": [[{ "node": "Pick Next Post", "type": "main", "index": 0 }]]
+    },
+    "Pick Next Post": {
+      "main": [[{ "node": "Has Post?", "type": "main", "index": 0 }]]
+    },
+    "Has Post?": {
+      "main": [
+        [{ "node": "Load Channel", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Load Channel": {
+      "main": [[{ "node": "Post to Channel", "type": "main", "index": 0 }]]
+    },
+    "Post to Channel": {
+      "main": [[{ "node": "Mark Posted", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
