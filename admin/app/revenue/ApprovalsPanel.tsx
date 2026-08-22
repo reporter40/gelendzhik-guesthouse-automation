@@ -9,6 +9,18 @@ import {
   markApplyFailedAction,
 } from "./actions";
 import type { PricingRecommendation, AuditLogEntry, RCExportResponse } from "@/lib/adminApi";
+import { DirectOfferPanel } from "./DirectOfferPanel";
+import { ReferralEconomicsPreview } from "./ReferralEconomicsPreview";
+import { ReferralOfferCopyPanel } from "./ReferralOfferCopyPanel";
+import { ManualReferralLeadPanel } from "./ManualReferralLeadPanel";
+import {
+  isManualReferralLeadAudit,
+  isPropertyContextSettingsAudit,
+  normalizeManualReferralLeadAuditMetadata,
+  normalizePropertyContextAuditMetadata,
+  summarizeManualReferralLeadAudit,
+  summarizePropertyContextAudit,
+} from "@/lib/audit-metadata";
 
 const REC_TYPE_LABELS: Record<string, { label: string; cls: string }> = {
   gap_special_price:    { label: "Спеццена",        cls: "bg-yellow-100 text-yellow-800" },
@@ -37,7 +49,23 @@ const AUDIT_LABELS: Record<string, { label: string; cls: string }> = {
   export_rc_manual:    { label: "⇥ экспортировано",        cls: "bg-amber-100 text-amber-700" },
   manual_applied:      { label: "✓ применено вручную",     cls: "bg-green-100 text-green-700" },
   manual_apply_failed: { label: "✗ ошибка применения",     cls: "bg-red-100 text-red-700"     },
+  property_context_settings_save: { label: "PCS", cls: "bg-violet-100 text-violet-800" },
+  manual_referral_lead_logged: { label: "↗ referral", cls: "bg-indigo-100 text-indigo-800" },
 };
+
+function auditReasonLine(entry: AuditLogEntry): string {
+  if (isPropertyContextSettingsAudit(entry)) {
+    return summarizePropertyContextAudit(
+      normalizePropertyContextAuditMetadata(entry.metadata),
+    );
+  }
+  if (isManualReferralLeadAudit(entry)) {
+    return summarizeManualReferralLeadAudit(
+      normalizeManualReferralLeadAuditMetadata(entry.metadata),
+    );
+  }
+  return entry.reason ?? "—";
+}
 
 const TABLE_HEADERS = [
   "Номер",
@@ -349,6 +377,17 @@ function RecRow({
         </td>
       </tr>
 
+      {rec.direct_price != null && rec.direct_price > 0 && !Number.isNaN(rec.direct_price) && (
+        <tr className="bg-slate-50/40">
+          <td colSpan={COL_SPAN} className="px-3 pb-3 pt-0 border-b border-gray-100">
+            <DirectOfferPanel rec={rec} />
+            <ReferralEconomicsPreview rec={rec} />
+            <ReferralOfferCopyPanel rec={rec} />
+            <ManualReferralLeadPanel rec={rec} />
+          </td>
+        </tr>
+      )}
+
       {exportResult && (
         <tr>
           <td colSpan={COL_SPAN} className="px-3 pb-3">
@@ -457,7 +496,9 @@ export function ApprovalsPanel({
                         {e.old_price != null ? fmt(e.old_price) : "—"} /{" "}
                         {e.new_price != null ? fmt(e.new_price) : "—"}
                       </td>
-                      <td className="px-3 py-2 text-gray-500 max-w-xs">{e.reason ?? "—"}</td>
+                      <td className="px-3 py-2 text-gray-500 max-w-xs text-xs leading-relaxed">
+                        {auditReasonLine(e)}
+                      </td>
                     </tr>
                   );
                 })}

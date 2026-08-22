@@ -52,6 +52,11 @@ sudo infrastructure/setup.sh
 | Интерфейс | Telegram Bot API | — | $0 |
 | WhatsApp | Evolution API | MIT | $0 |
 
+## Release / Handoff
+
+- Release handoff: [HANDOFF.md](HANDOFF.md)
+- Referral funnel runbook: [docs/REFERRAL_FUNNEL_RUNBOOK.md](docs/REFERRAL_FUNNEL_RUNBOOK.md)
+
 ## Документация
 - [Развёртывание](docs/DEPLOYMENT.md)
 - [Адаптация под клиента](docs/CUSTOMIZATION.md)

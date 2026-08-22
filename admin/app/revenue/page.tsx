@@ -16,6 +16,7 @@ import {
   RevenueNotificationsStatus,
   CohortSummaryResponse,
   CandidatesResponse,
+  getPropertyContextSettings,
 } from "@/lib/adminApi";
 import Nav from "@/components/Nav";
 import CompetitorForm from "./CompetitorForm";
@@ -29,6 +30,9 @@ import { MarketDataQualityPanel } from "./MarketDataQualityPanel";
 import { CompetitorCandidatesPanel } from "./CompetitorCandidatesPanel";
 import { CompetitorSourcesTable } from "./CompetitorSourcesTable";
 import { DirectBookingStrategyPanel } from "./DirectBookingStrategyPanel";
+import { PropertyContextSettingsPanel } from "./PropertyContextSettingsPanel";
+import { AuditDeepLinkScroll } from "./AuditDeepLinkScroll";
+import { RevenueAuditLogTable } from "./RevenueAuditLogTable";
 
 function fmt(n: number | null | undefined, fallback = "—") {
   if (n == null || isNaN(n)) return fallback;
@@ -49,6 +53,9 @@ export default async function RevenuePage() {
   let cohortSummaryError: string | null = null;
   let candidatesData: CandidatesResponse | null = null;
   let candidatesError: string | null = null;
+  let pcsMapText = "{\n}";
+  let pcsDefault = "";
+  let pcsLoadError: string | null = null;
 
   try {
     [data, auditLog, marketHistory, dashboard] = await Promise.all([
@@ -59,6 +66,14 @@ export default async function RevenuePage() {
     ]);
   } catch (e) {
     error = e instanceof AdminApiError ? e.message : "Ошибка загрузки данных";
+  }
+
+  try {
+    const pcs = await getPropertyContextSettings();
+    pcsMapText = JSON.stringify(pcs.property_context_map ?? {}, null, 2);
+    pcsDefault = pcs.default_property_context ?? "";
+  } catch (e) {
+    pcsLoadError = e instanceof AdminApiError ? e.message : "PCS: ошибка загрузки";
   }
 
   await Promise.all([
@@ -125,6 +140,12 @@ export default async function RevenuePage() {
             {error}
           </div>
         )}
+
+        <PropertyContextSettingsPanel
+          initialMapText={pcsMapText}
+          initialDefault={pcsDefault}
+          serverLoadError={pcsLoadError}
+        />
 
         {/* ── 1. TODAY ACTIONS ── */}
         <TodayActionsPanel data={dashboard} />
@@ -226,44 +247,12 @@ export default async function RevenuePage() {
         >
           <span id="manual-export" className="scroll-mt-4" />
           {auditLog.length === 0 ? (
-            <EmptyCard icon="📋" text="Лог пуст — действий ещё не было." />
+            <>
+              <AuditDeepLinkScroll />
+              <EmptyCard icon="📋" text="Лог пуст — действий ещё не было." />
+            </>
           ) : (
-            <div className="aq-table-wrap">
-              <table className="aq-table">
-                <thead>
-                  <tr>
-                    {["Дата", "Действие", "Статус", "Объект", "Период", "Цена", "Актор"].map((h) => (
-                      <th key={h}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLog.map((entry) => (
-                    <tr key={entry.id}>
-                      <td className="text-xs text-gray-400 whitespace-nowrap">
-                        {new Date(entry.created_at).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}
-                      </td>
-                      <td>
-                        <ActionBadge action={entry.action} />
-                      </td>
-                      <td className="text-xs text-gray-500">
-                        {entry.previous_status && entry.new_status
-                          ? `${entry.previous_status} → ${entry.new_status}`
-                          : entry.new_status ?? "—"}
-                      </td>
-                      <td className="font-medium text-gray-800">{entry.apartment_id ? `№${entry.apartment_id}` : "—"}</td>
-                      <td className="text-xs text-gray-600 whitespace-nowrap">
-                        {entry.date_from && entry.date_to ? `${entry.date_from} — ${entry.date_to}` : "—"}
-                      </td>
-                      <td className="text-right font-medium text-gray-800">
-                        {entry.new_price ? `${fmt(entry.new_price)} ₽` : "—"}
-                      </td>
-                      <td className="text-xs text-gray-400">{entry.actor ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <RevenueAuditLogTable auditLog={auditLog} />
           )}
         </Section>
 
@@ -399,19 +388,6 @@ function NightsBadge({ n }: { n: number }) {
   return (
     <span className="inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold"
           style={colors}>{n}</span>
-  );
-}
-
-function ActionBadge({ action }: { action: string }) {
-  const colors =
-    action.includes("fail")    ? { bg: "#FEE2E2", color: "#B91C1C" } :
-    action.includes("applied") ? { bg: "#D1FAE5", color: "#065F46" } :
-    action.includes("export")  ? { bg: "#FEF3C7", color: "#92400E" } :
-    action.includes("approv")  ? { bg: "#EDE9FE", color: "#5B21B6" } :
-                                 { bg: "#F3F4F6", color: "#4B5563" };
-  return (
-    <span className="inline-flex px-2 py-0.5 rounded text-xs font-semibold"
-          style={colors}>{action}</span>
   );
 }
 

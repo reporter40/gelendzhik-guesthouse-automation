@@ -75,6 +75,8 @@ export type PricingRecommendation = {
   id?: string;
   apartment_id: string;
   apartment_name: string;
+  /** D1.3: бренд / гостевой дом с API (например «Акваторинг»), если отдаётся бэкендом */
+  property_context?: string | null;
   date_from: string;
   date_to: string;
   nights: number;
@@ -113,6 +115,8 @@ export type AuditLogEntry = {
   actor: string | null;
   source: string;
   created_at: string;
+  /** D1.7+ — jsonb из pricing_action_audit_log (например property_context_settings_save). */
+  metadata?: Record<string, unknown> | null;
 };
 
 export type CompetitorSource = {
@@ -285,6 +289,134 @@ function buildAdminFetch(body: Record<string, unknown>): () => Promise<Response>
       body: JSON.stringify(body),
       cache: "no-store",
     });
+}
+
+/** D1.6: чтение/запись property_context через Admin API (PCS workflow). */
+export type PropertyContextSettings = {
+  ok: boolean;
+  property_context_map: Record<string, string>;
+  default_property_context: string | null;
+};
+
+export async function getPropertyContextSettings(): Promise<PropertyContextSettings> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({ action: "property_context_settings", mode: "get" })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok) {
+    const err =
+      body && typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+    throw new AdminApiError(err, res.status);
+  }
+  if (!body || body.ok !== true) {
+    const err = body && typeof body.error === "string" ? body.error : "request_failed";
+    throw new AdminApiError(err, res.status);
+  }
+  const rawMap = body.property_context_map;
+  let property_context_map: Record<string, string> = {};
+  if (rawMap && typeof rawMap === "object" && !Array.isArray(rawMap)) {
+    property_context_map = rawMap as Record<string, string>;
+  }
+  const d = body.default_property_context;
+  const default_property_context =
+    d == null || typeof d !== "string" ? null : d.trim() === "" ? null : d.trim();
+
+  return { ok: true, property_context_map, default_property_context };
+}
+
+export async function savePropertyContextSettings(input: {
+  property_context_map: Record<string, string>;
+  default_property_context?: string;
+}): Promise<{ ok: boolean; message?: string; audit_recorded?: boolean }> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({
+      action: "property_context_settings",
+      mode: "save",
+      property_context_map: input.property_context_map,
+      default_property_context: input.default_property_context ?? "",
+    })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok) {
+    const err =
+      body && typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+    throw new AdminApiError(err, res.status);
+  }
+  if (!body || body.ok !== true) {
+    const err = body && typeof body.error === "string" ? body.error : "save_failed";
+    throw new AdminApiError(err, res.status);
+  }
+  const msg =
+    body && typeof body.message === "string" ? body.message : "saved";
+  const audit_recorded =
+    body &&
+    typeof body === "object" &&
+    "audit_recorded" in body &&
+    body.audit_recorded === true;
+  return { ok: true, message: msg, audit_recorded };
+}
+
+/** D2.3 — manual referral lead log (audit only, no payout/booking). */
+export type ManualReferralLeadInput = {
+  apartment_id?: string | number | null;
+  apartment_name?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  referrer_name?: string | null;
+  referrer_contact?: string | null;
+  referred_guest_name?: string | null;
+  referred_guest_contact?: string | null;
+  referral_price?: number | null;
+  referral_reward?: number | null;
+  referral_owner_net?: number | null;
+  referral_guest_savings?: number | null;
+  referral_owner_gain_vs_aggregator?: number | null;
+  notes?: string | null;
+};
+
+export type ManualReferralLeadSaveResponse = {
+  ok: true;
+  audit_recorded?: boolean;
+  audit_id?: string | null;
+};
+
+export async function saveManualReferralLead(
+  input: ManualReferralLeadInput,
+): Promise<ManualReferralLeadSaveResponse> {
+  let res: Response;
+  try {
+    res = await buildAdminFetch({
+      action: "manual_referral_lead",
+      mode: "save",
+      ...input,
+    })();
+  } catch (e) {
+    throw new AdminApiError(e instanceof Error ? e.message : "Network error");
+  }
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok) {
+    const err =
+      body && typeof body.error === "string" ? body.error : `HTTP ${res.status}`;
+    throw new AdminApiError(err, res.status);
+  }
+  if (!body || body.ok !== true) {
+    const err = body && typeof body.error === "string" ? body.error : "save_failed";
+    throw new AdminApiError(err, res.status);
+  }
+  const audit_recorded =
+    body &&
+    typeof body === "object" &&
+    "audit_recorded" in body &&
+    body.audit_recorded === true;
+  const audit_id =
+    body && typeof body.audit_id === "string" ? body.audit_id : null;
+  return { ok: true, audit_recorded, audit_id };
 }
 
 export async function approveRecommendation(
