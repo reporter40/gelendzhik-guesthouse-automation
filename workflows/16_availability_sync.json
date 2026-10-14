@@ -1,0 +1,416 @@
+{
+  "id": "availsync0000016",
+  "name": "16 — Availability Sync (iCal + Avito)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "id": "every-5-minutes"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, platform, apartment_id, ical_url FROM avail_source WHERE enabled AND kind = 'ical' ORDER BY id",
+        "options": {}
+      },
+      "name": "Load iCal Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        100
+      ],
+      "id": "load-ical-sources",
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.ical_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "name": "Fetch iCal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        100
+      ],
+      "id": "fetch-ical",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Разбор iCal-выгрузки площадки в занятость [check_in, check_out) по датам (Europe/Moscow).\n// Чистая функция: используется в n8n Code-узле WF16 (вставляется как есть) и в тестах (node ical_parse.test.js).\n// Возвращает {ok, error?, events:[{uid, check_in:'YYYY-MM-DD', check_out:'YYYY-MM-DD', summary}], skipped}.\nfunction parseIcal(text) {\n  const MSK_OFFSET_MIN = 180; // Europe/Moscow: UTC+3 без перехода на летнее время с 2014\n  if (typeof text !== 'string' || !/BEGIN:VCALENDAR/i.test(text) || !/END:VCALENDAR/i.test(text)) {\n    return { ok: false, error: 'not a VCALENDAR', events: [], skipped: 0 };\n  }\n  const lines = text.replace(/\\r\\n|\\r/g, '\\n').replace(/\\n[ \\t]/g, '').split('\\n');\n  const pad = (n) => String(n).padStart(2, '0');\n  const ymd = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;\n  const addDays = (s, n) => { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };\n\n  function toDate(prop) {\n    if (!prop) return null;\n    const v = prop.value.trim();\n    let m = v.match(/^(\\d{4})(\\d{2})(\\d{2})$/);\n    if (m) return ymd(m[1], m[2], m[3]);\n    m = v.match(/^(\\d{4})(\\d{2})(\\d{2})T(\\d{2})(\\d{2})(\\d{2})(Z?)$/);\n    if (!m) return null;\n    if (m[7] === 'Z') { // UTC → Москва, затем отбрасываем время\n      const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) + MSK_OFFSET_MIN * 60000;\n      return new Date(t).toISOString().slice(0, 10);\n    }\n    return ymd(m[1], m[2], m[3]); // TZID=… или «плавающее» время — местная дата как есть\n  }\n  function parseProp(line) {\n    const i = line.indexOf(':'); if (i < 0) return null;\n    const head = line.slice(0, i), value = line.slice(i + 1);\n    const parts = head.split(';');\n    const params = {};\n    for (const p of parts.slice(1)) { const [k, ...r] = p.split('='); params[k.toUpperCase()] = r.join('='); }\n    return { name: parts[0].toUpperCase(), params, value };\n  }\n  function durationDays(v) {\n    const m = (v || '').match(/^P(?:(\\d+)W)?(?:(\\d+)D)?(?:T(?:(\\d+)H)?(?:(\\d+)M)?)?/);\n    if (!m) return null;\n    return (+(m[1] || 0)) * 7 + (+(m[2] || 0)) + ((+(m[3] || 0)) >= 24 ? Math.floor(+m[3] / 24) : 0);\n  }\n  const unescape = (s) => (s || '').replace(/\\\\n/gi, ' ').replace(/\\\\([,;\\\\])/g, '$1').trim();\n\n  const events = []; let skipped = 0; let cur = null;\n  for (const raw of lines) {\n    const line = raw.trimEnd();\n    if (/^BEGIN:VEVENT$/i.test(line)) { cur = {}; continue; }\n    if (/^END:VEVENT$/i.test(line)) {\n      if (cur) {\n        const status = (cur.STATUS && cur.STATUS.value.trim().toUpperCase()) || '';\n        let ci = toDate(cur.DTSTART), co = toDate(cur.DTEND);\n        if (ci && !co) {\n          const dd = cur.DURATION ? durationDays(cur.DURATION.value) : null;\n          co = addDays(ci, dd && dd > 0 ? dd : 1);\n        }\n        if (status === 'CANCELLED' || !ci || !co) { skipped++; }\n        else {\n          if (co <= ci) co = addDays(ci, 1); // однодневное событие с временем внутри дня\n          const summary = unescape(cur.SUMMARY && cur.SUMMARY.value);\n          const uid = (cur.UID && cur.UID.value.trim()) || `nouid-${ci}-${co}-${summary}`.slice(0, 200);\n          events.push({ uid, check_in: ci, check_out: co, summary });\n        }\n      }\n      cur = null; continue;\n    }\n    if (cur) { const p = parseProp(line); if (p && !(p.name in cur)) cur[p.name] = p; }\n  }\n  return { ok: true, events, skipped };\n}\n\nconst q = (s) => \"'\" + String(s ?? '').replace(/'/g, \"''\") + \"'\";\nconst applySql = (sourceId, complete, events, keepPast, error) => complete\n  ? `SELECT avail_apply_snapshot(${Number(sourceId)}, ${q(JSON.stringify(events))}::jsonb, true, ${keepPast ? 'true' : 'false'}) AS r`\n  : `SELECT avail_mark_error(${Number(sourceId)}, ${q(error)}) AS r`;\n\nconst sources = $('Load iCal Sources').all();\nreturn $input.all().map((it, i) => {\n  const src = sources[i].json;\n  const j = it.json || {};\n  const status = Number(j.statusCode || 0);\n  if (j.error || status !== 200) {\n    const err = j.error ? (j.error.message || JSON.stringify(j.error)) : `HTTP ${status}`;\n    return { json: { source_id: src.id, sql: applySql(src.id, false, [], false, err) } };\n  }\n  const r = parseIcal(typeof j.body === 'string' ? j.body : String(j.data ?? ''));\n  if (!r.ok) return { json: { source_id: src.id, sql: applySql(src.id, false, [], false, r.error) } };\n  return { json: { source_id: src.id, events: r.events.length, sql: applySql(src.id, true, r.events, false) } };\n});\n"
+      },
+      "name": "Parse iCal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ],
+      "id": "parse-ical"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "name": "Apply iCal Snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        100
+      ],
+      "id": "apply-ical-snapshot",
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.id, s.apartment_id, s.avito_item_id, v.value AS account_id FROM avail_source s JOIN system_vars v ON v.key = 'avito_account_id' WHERE s.enabled AND s.kind = 'avito_api' ORDER BY s.id",
+        "options": {}
+      },
+      "name": "Load Avito Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        300
+      ],
+      "id": "load-avito-sources",
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.avito.ru/realty/v1/accounts/{{ $json.account_id }}/items/{{ $json.avito_item_id }}/bookings?date_start={{ $now.setZone('Europe/Moscow').toFormat('yyyy-MM-dd') }}&date_end={{ $now.setZone('Europe/Moscow').plus({ days: 365 }).toFormat('yyyy-MM-dd') }}&with_unpaid=true",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "name": "Fetch Avito Bookings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        300
+      ],
+      "id": "fetch-avito-bookings",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "avito_oauth",
+          "name": "Avito OAuth2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst q = (s) => \"'\" + String(s ?? '').replace(/'/g, \"''\") + \"'\";\nconst applySql = (sourceId, complete, events, keepPast, error) => complete\n  ? `SELECT avail_apply_snapshot(${Number(sourceId)}, ${q(JSON.stringify(events))}::jsonb, true, ${keepPast ? 'true' : 'false'}) AS r`\n  : `SELECT avail_mark_error(${Number(sourceId)}, ${q(error)}) AS r`;\n\nconst sources = $('Load Avito Sources').all();\nreturn $input.all().map((it, i) => {\n  const src = sources[i].json;\n  const j = it.json || {};\n  const status = Number(j.statusCode || 0);\n  const list = j.body && Array.isArray(j.body.bookings) ? j.body.bookings : null;\n  if (j.error || status !== 200 || !list) {\n    const err = j.error ? (j.error.message || JSON.stringify(j.error)) : `HTTP ${status}: ${JSON.stringify(j.body || '').slice(0, 200)}`;\n    return { json: { source_id: src.id, sql: applySql(src.id, false, [], true, err) } };\n  }\n  const events = list\n    .filter(b => b && (b.status === 'active' || b.status === 'pending'))\n    .map(b => ({ uid: 'avito-' + b.avito_booking_id, check_in: b.check_in, check_out: b.check_out,\n                 summary: `Avito ${b.status}${b.guest_count ? ', гостей ' + b.guest_count : ''}` }));\n  // keepPast=true: Avito не отдаёт брони с заездом в прошлом — их не удаляем.\n  // Все брони (включая отменённые) — в bookings для 03 Guest Journey и отчётов.\n  const sql = applySql(src.id, true, events, true).replace(' AS r', ' AS r') +\n    `, avito_upsert_bookings(${q(src.apartment_id)}, ${q(JSON.stringify(list))}::jsonb) AS bookings_upserted`;\n  return { json: { source_id: src.id, events: events.length, sql } };\n});\n"
+      },
+      "name": "Map Avito Bookings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "id": "map-avito-bookings"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "name": "Apply Avito Snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        300
+      ],
+      "id": "apply-avito-snapshot",
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.avito_item_id, s.apartment_id, v.value AS account_id, p->'body' AS body, p->>'hash' AS hash FROM avail_source s JOIN system_vars v ON v.key = 'avito_account_id' CROSS JOIN LATERAL avito_push_payload(s.avito_item_id) p LEFT JOIN avito_push_state st ON st.avito_item_id = s.avito_item_id WHERE s.enabled AND s.kind = 'avito_api' AND (SELECT value FROM system_vars WHERE key = 'avito_push_enabled') = 'true' AND (st.last_hash IS DISTINCT FROM p->>'hash' OR st.last_status IS DISTINCT FROM 'ok')",
+        "options": {}
+      },
+      "name": "Avito Push Due",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        500
+      ],
+      "id": "avito-push-due",
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.avito.ru/core/v1/accounts/{{ $json.account_id }}/items/{{ $json.avito_item_id }}/bookings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "name": "Push Avito Calendar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        500
+      ],
+      "id": "push-avito-calendar",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "avito_oauth",
+          "name": "Avito OAuth2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst q = (s) => \"'\" + String(s ?? '').replace(/'/g, \"''\") + \"'\";\nconst due = $('Avito Push Due').all();\nreturn $input.all().map((it, i) => {\n  const d = due[i].json;\n  const j = it.json || {};\n  const status = Number(j.statusCode || 0);\n  const ok = !j.error && status === 200 && j.body && j.body.result === 'success';\n  const err = ok ? null : (j.error ? (j.error.message || JSON.stringify(j.error)) : `HTTP ${status}: ${JSON.stringify(j.body || '').slice(0, 300)}`);\n  const sql = `INSERT INTO avito_push_state (avito_item_id, apartment_id, last_hash, last_pushed_at, last_status, last_error)\n    VALUES (${Number(d.avito_item_id)}, ${q(d.apartment_id)}, ${ok ? q(d.hash) : 'NULL'}, now(), ${q(ok ? 'ok' : 'error')}, ${err ? q(err) : 'NULL'})\n    ON CONFLICT (avito_item_id) DO UPDATE SET last_hash = COALESCE(EXCLUDED.last_hash, avito_push_state.last_hash),\n      last_pushed_at = now(), last_status = EXCLUDED.last_status, last_error = EXCLUDED.last_error`;\n  return { json: { sql } };\n});\n"
+      },
+      "name": "Record Push",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        500
+      ],
+      "id": "record-push"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "name": "Save Push State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        500
+      ],
+      "id": "save-push-state",
+      "credentials": {
+        "postgres": {
+          "id": "gelendzhik_db",
+          "name": "Gelendzhik DB"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Load iCal Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Avito Sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Avito Push Due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load iCal Sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch iCal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch iCal": {
+      "main": [
+        [
+          {
+            "node": "Parse iCal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse iCal": {
+      "main": [
+        [
+          {
+            "node": "Apply iCal Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Avito Sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch Avito Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Avito Bookings": {
+      "main": [
+        [
+          {
+            "node": "Map Avito Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Avito Bookings": {
+      "main": [
+        [
+          {
+            "node": "Apply Avito Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avito Push Due": {
+      "main": [
+        [
+          {
+            "node": "Push Avito Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Avito Calendar": {
+      "main": [
+        [
+          {
+            "node": "Record Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Push": {
+      "main": [
+        [
+          {
+            "node": "Save Push State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow",
+    "saveDataErrorExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "generatedBy": "infrastructure/netcup-gelendzhik/build_stage2_workflows.py"
+  }
+}

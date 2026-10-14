@@ -8,7 +8,7 @@ name: watchdog
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "7,17,27,37,47,57 * * * *"   # не на круглых минутах: GitHub пропускает их под нагрузкой
   workflow_dispatch:
     inputs:
       test_alert:
