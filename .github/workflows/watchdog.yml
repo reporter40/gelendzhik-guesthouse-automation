@@ -80,7 +80,8 @@ jobs:
           else
             text="✅ Гостевой дом: сервер снова отвечает."
           fi
-          curl -s -m 20 "https://api.telegram.org/bot${BOT}/sendMessage" --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=${text}" > /dev/null
+          resp=$(curl -s -m 20 "https://api.telegram.org/bot${BOT}/sendMessage" --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=${text}")
+          echo "$resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("telegram ok:", d.get("ok"), d.get("description","")); sys.exit(0 if d.get("ok") else 1)'
 
       - name: Save state
         if: always()
