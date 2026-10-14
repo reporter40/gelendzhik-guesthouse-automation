@@ -1,0 +1,95 @@
+# ═══════════════════════════════════════════════════════════════
+# netcup (152.53.225.111): боевой контур гостевого дома
+#   postgres 16 + n8n 2.19.2 (pinned) + cloudflared (профиль tunnel)
+#
+# Наружу ничего не публикуется: n8n слушает только 127.0.0.1:5678,
+# внешний доступ — Cloudflare-туннель owner.aquatoring.ru (исходящее
+# соединение, Caddy/80/443 моста не трогаем).
+#
+# ВАЖНО: cloudflared в профиле "tunnel" — `docker compose up -d` его НЕ
+# поднимает. Запуск туннеля = переключение трафика с Мака на netcup:
+#   docker compose --profile tunnel up -d cloudflared
+#
+# Каталог на сервере: /opt/gelendzhik
+# ═══════════════════════════════════════════════════════════════
+name: gelendzhik
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: gelendzhik-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_gelendzhik}
+      POSTGRES_USER: ${POSTGRES_USER:-n8n_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      TZ: Europe/Moscow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-n8n_user} -d ${POSTGRES_DB:-n8n_gelendzhik} -h localhost']
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+    networks: [gelendzhik-net]
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.19.2          # закреплено; обновление — отдельная задача
+    container_name: gelendzhik-n8n
+    ports:
+      - "127.0.0.1:5678:5678"                      # только локально; наружу — через туннель
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n_gelendzhik}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n_user}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POSTGRESDB_POOL_MIN: "1"
+      DB_POSTGRESDB_POOL_MAX: "10"
+      DB_POSTGRESDB_TIMEOUT: "60000"
+      DB_POSTGRESDB_QUERY_TIMEOUT: "60000"
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL:-https://owner.aquatoring.ru/}
+      N8N_PROXY_HOPS: "1"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_SKIP_WEBHOOK_DEREGISTRATION_SHUTDOWN: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "168"
+      NODE_ENV: production
+      GENERIC_TIMEZONE: Europe/Moscow
+      TZ: Europe/Moscow
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [gelendzhik-net]
+
+  cloudflared:
+    image: cloudflare/cloudflared:${CLOUDFLARED_VERSION:-2026.10.0}
+    container_name: gelendzhik-cloudflared
+    profiles: [tunnel]
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    depends_on: [n8n]
+    restart: unless-stopped
+    networks: [gelendzhik-net]
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  gelendzhik-net:
+    driver: bridge

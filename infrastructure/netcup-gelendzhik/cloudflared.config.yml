@@ -1,0 +1,12 @@
+# Копируется на сервер как /opt/gelendzhik/cloudflared/config.yml
+# Тот же туннель, что был на Маке (~/.cloudflared/config.yml), но origin — контейнер n8n.
+tunnel: 5837a87f-a190-4363-8129-88232de199aa
+credentials-file: /etc/cloudflared/5837a87f-a190-4363-8129-88232de199aa.json
+metrics: 0.0.0.0:2000
+originRequest:
+  connectTimeout: 10s
+
+ingress:
+  - hostname: owner.aquatoring.ru
+    service: http://n8n:5678
+  - service: http_status:404
