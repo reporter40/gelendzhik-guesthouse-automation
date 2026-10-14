@@ -39,7 +39,8 @@
         "operation": "executeQuery",
         "query": "SELECT value FROM system_vars WHERE key='admin_api_token' LIMIT 1;",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "code01",
@@ -182,7 +183,8 @@
         "operation": "executeQuery",
         "query": "SELECT (SELECT COUNT(*) FROM bookings) AS bookings_count, (SELECT COUNT(*) FROM bookings WHERE source='realtycalendar-ical') AS rc_bookings_count, (SELECT MAX(updated_at) FROM bookings WHERE source='realtycalendar-ical') AS latest_rc_sync, (SELECT COUNT(*) FROM message_templates) AS templates_count, (SELECT COUNT(*) FROM bookings WHERE guest_chat_id IS NOT NULL) AS guest_connected_count;",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "pg03",
@@ -203,7 +205,8 @@
         "operation": "executeQuery",
         "query": "SELECT id, apartment_id, apartment_name, checkin_at::text, checkout_at::text, nights, source, status, COALESCE(guest_name,'') AS guest_name, COALESCE(guest_username,'') AS guest_username, (guest_chat_id IS NOT NULL) AS guest_connected, journey_sent, 'https://t.me/GuestGelen_bot?start='||id AS deep_link, updated_at FROM bookings ORDER BY checkin_at ASC, apartment_id ASC;",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "pg04",
@@ -224,7 +227,8 @@
         "operation": "executeQuery",
         "query": "SELECT key, channel, lang, body, active, updated_at FROM message_templates ORDER BY channel, key;",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "resp400",
@@ -270,7 +274,7 @@
         420
       ],
       "parameters": {
-        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: { _body: JSON.stringify({ ok: true, action: 'bookings', count: rows.length, data: rows }) } }];"
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{ json: { _body: JSON.stringify({ ok: true, action: 'bookings', count: rows.length, data: rows }) } }];"
       }
     },
     {
@@ -300,7 +304,7 @@
         590
       ],
       "parameters": {
-        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: { _body: JSON.stringify({ ok: true, action: 'templates', count: rows.length, data: rows }) } }];"
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{ json: { _body: JSON.stringify({ ok: true, action: 'templates', count: rows.length, data: rows }) } }];"
       }
     },
     {
@@ -385,7 +389,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH gap_data AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss,\n    COUNT(*) FILTER (WHERE nights = 1) AS one_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 2) AS two_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 3) AS three_night_gaps\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_prices AS (\n  SELECT\n    COUNT(*) AS competitor_count,\n    MIN(price_per_night) AS market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n    AVG(price_per_night) AS market_avg,\n    MAX(price_per_night) AS market_max\n  FROM competitor_prices\n  WHERE date_from <= NOW() AND date_to >= NOW()\n),\ncomp_sources AS (\n  SELECT\n    COUNT(*) AS competitor_sources_count,\n    COUNT(*) FILTER (WHERE status = 'active') AS active_competitors_count,\n    COUNT(*) FILTER (WHERE status = 'excluded') AS excluded_competitors_count,\n    MIN(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_median,\n    AVG(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_avg,\n    MAX(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_max\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\nrec_data AS (\n  SELECT COUNT(*) AS recommendations_count\n  FROM pricing_recommendations\n  WHERE status IN ('draft', 'approved')\n),\ngap_json AS (\n  SELECT json_agg(row_to_json(g)) AS gap_windows\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights, estimated_loss, recommendation, status\n    FROM gap_windows WHERE status = 'open' ORDER BY gap_start, apartment_id\n  ) g\n),\ncp_json AS (\n  SELECT json_agg(row_to_json(c)) AS competitor_prices\n  FROM (\n    SELECT source, title, url, location, date_from, date_to, price_per_night, notes\n    FROM competitor_prices ORDER BY collected_at DESC LIMIT 20\n  ) c\n),\nobs_json AS (\n  SELECT COALESCE(json_agg(row_to_json(o)), '[]'::json) AS latest_observations\n  FROM (\n    SELECT cpo.id::text AS id,\n           cs.name AS competitor_name,\n           cs.similarity_score,\n           cs.source_platform,\n           cs.url AS competitor_url,\n           to_char(cpo.stay_date_from, 'YYYY-MM-DD') AS stay_date_from,\n           to_char(cpo.stay_date_to, 'YYYY-MM-DD') AS stay_date_to,\n           cpo.nights,\n           cpo.price_per_night,\n           cpo.confidence,\n           cpo.collection_method,\n           to_char(cpo.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS observed_at\n    FROM competitor_price_observations cpo\n    JOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n    ORDER BY cpo.observed_at DESC\n    LIMIT 30\n  ) o\n),\nsources_json AS (\n  SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) AS competitor_sources\n  FROM (\n    SELECT\n      cs.id::text AS id,\n      cs.name,\n      cs.source_platform,\n      cs.url,\n      cs.address,\n      cs.district,\n      cs.cohort_code,\n      cs.target_apartment_ids,\n      cs.similarity_score,\n      cs.signal_quality_score,\n      cs.discovery_status,\n      cs.status,\n      cs.priority,\n      cs.property_type,\n      cs.area_m2,\n      cs.max_guests,\n      cs.rooms,\n      cs.price_low,\n      cs.price_high,\n      cs.selection_reason,\n      cs.exclusion_reason,\n      cs.last_checked_at,\n      cs.created_at,\n      cs.updated_at,\n      (SELECT cpo.price_per_night FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price,\n      (SELECT MAX(cpo.observed_at) FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id) AS latest_observed_at\n    FROM competitor_sources cs\n    ORDER BY CASE WHEN cs.status IN ('active','approved') THEN 0 ELSE 1 END, cs.priority\n  ) s\n),\nrec_json AS (\n  SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS pricing_recommendations\n  FROM (\n    SELECT pr.id::text AS id, pr.apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       COALESCE(\n         NULLIF(TRIM(BOTH FROM (\n           SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n           FROM (\n             SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n             FROM system_vars\n             WHERE key = 'property_context_map'\n               AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n             LIMIT 1\n           ) m\n           WHERE jsonb_typeof(m.map_json) = 'object'\n         ))), ''),\n         NULLIF(TRIM(BOTH FROM COALESCE(\n           (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n           ''\n         )), '')\n       ) AS property_context,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\n    FROM pricing_recommendations pr\n    JOIN apartments a ON a.id = pr.apartment_id\n    WHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\n    ORDER BY pr.date_from, pr.apartment_id\n  ) x\n)\nSELECT\n  gd.total_gaps, gd.total_estimated_loss,\n  gd.one_night_gaps, gd.two_night_gaps, gd.three_night_gaps,\n  cp.competitor_count, cp.market_min, cp.market_median, cp.market_avg, cp.market_max,\n  cs2.competitor_sources_count, cs2.active_competitors_count, cs2.excluded_competitors_count,\n  cs2.cs_market_min, cs2.cs_market_median, cs2.cs_market_avg, cs2.cs_market_max,\n  rd.recommendations_count,\n  gj.gap_windows, cpj.competitor_prices, oj.latest_observations,\n  sj.competitor_sources, rj.pricing_recommendations\nFROM gap_data gd, comp_prices cp, comp_sources cs2, rec_data rd,\n     gap_json gj, cp_json cpj, obs_json oj, sources_json sj, rec_json rj",
+        "query": "WITH gap_data AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss,\n    COUNT(*) FILTER (WHERE nights = 1) AS one_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 2) AS two_night_gaps,\n    COUNT(*) FILTER (WHERE nights = 3) AS three_night_gaps\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_prices AS (\n  SELECT\n    COUNT(*) AS competitor_count,\n    MIN(price_per_night) AS market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_night) AS market_median,\n    AVG(price_per_night) AS market_avg,\n    MAX(price_per_night) AS market_max\n  FROM competitor_prices\n  WHERE date_from <= NOW() AND date_to >= NOW()\n),\ncomp_sources AS (\n  SELECT\n    COUNT(*) AS competitor_sources_count,\n    COUNT(*) FILTER (WHERE status = 'active') AS active_competitors_count,\n    COUNT(*) FILTER (WHERE status = 'excluded') AS excluded_competitors_count,\n    MIN(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_min,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_median,\n    AVG(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_avg,\n    MAX(cpo.price_per_night) FILTER (WHERE cs.status='active' AND cs.similarity_score>=80) AS cs_market_max\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\nrec_data AS (\n  SELECT COUNT(*) AS recommendations_count\n  FROM pricing_recommendations\n  WHERE status IN ('draft', 'approved')\n),\ngap_json AS (\n  SELECT json_agg(row_to_json(g)) AS gap_windows\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights, estimated_loss, recommendation, status\n    FROM gap_windows WHERE status = 'open' ORDER BY gap_start, apartment_id\n  ) g\n),\ncp_json AS (\n  SELECT json_agg(row_to_json(c)) AS competitor_prices\n  FROM (\n    SELECT source, title, url, location, date_from, date_to, price_per_night, notes\n    FROM competitor_prices ORDER BY collected_at DESC LIMIT 20\n  ) c\n),\nobs_json AS (\n  SELECT COALESCE(json_agg(row_to_json(o)), '[]'::json) AS latest_observations\n  FROM (\n    SELECT cpo.id::text AS id,\n           cs.name AS competitor_name,\n           cs.similarity_score,\n           cs.source_platform,\n           cs.url AS competitor_url,\n           to_char(cpo.stay_date_from, 'YYYY-MM-DD') AS stay_date_from,\n           to_char(cpo.stay_date_to, 'YYYY-MM-DD') AS stay_date_to,\n           cpo.nights,\n           cpo.price_per_night,\n           cpo.confidence,\n           cpo.collection_method,\n           to_char(cpo.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS observed_at\n    FROM competitor_price_observations cpo\n    JOIN competitor_sources cs ON cs.id = cpo.competitor_source_id\n    ORDER BY cpo.observed_at DESC\n    LIMIT 30\n  ) o\n),\nsources_json AS (\n  SELECT COALESCE(json_agg(row_to_json(s)), '[]'::json) AS competitor_sources\n  FROM (\n    SELECT\n      cs.id::text AS id,\n      cs.name,\n      cs.source_platform,\n      cs.url,\n      cs.address,\n      cs.district,\n      cs.cohort_code,\n      cs.target_apartment_ids,\n      cs.similarity_score,\n      cs.signal_quality_score,\n      cs.discovery_status,\n      cs.status,\n      cs.priority,\n      cs.property_type,\n      cs.area_m2,\n      cs.max_guests,\n      cs.rooms,\n      cs.price_low,\n      cs.price_high,\n      cs.selection_reason,\n      cs.exclusion_reason,\n      cs.last_checked_at,\n      cs.created_at,\n      cs.updated_at,\n      (SELECT cpo.price_per_night FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id ORDER BY cpo.observed_at DESC LIMIT 1) AS latest_price,\n      (SELECT MAX(cpo.observed_at) FROM competitor_price_observations cpo\n       WHERE cpo.competitor_source_id = cs.id) AS latest_observed_at\n    FROM competitor_sources cs\n    ORDER BY CASE WHEN cs.status IN ('active','approved') THEN 0 ELSE 1 END, cs.priority\n  ) s\n),\nrec_json AS (\n  SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS pricing_recommendations\n  FROM (\n    SELECT pr.id::text AS id, pr.apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       COALESCE(\n         NULLIF(TRIM(BOTH FROM (\n           SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n           FROM (\n             SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n             FROM system_vars\n             WHERE key = 'property_context_map'\n               AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n             LIMIT 1\n           ) m\n           WHERE jsonb_typeof(m.map_json) = 'object'\n         )), ''),\n         NULLIF(TRIM(BOTH FROM COALESCE(\n           (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n           ''\n         )), '')\n       ) AS property_context,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\n    FROM pricing_recommendations pr\n    JOIN apartments a ON a.id = pr.apartment_id\n    WHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\n    ORDER BY pr.date_from, pr.apartment_id\n  ) x\n)\nSELECT\n  gd.total_gaps, gd.total_estimated_loss,\n  gd.one_night_gaps, gd.two_night_gaps, gd.three_night_gaps,\n  cp.competitor_count, cp.market_min, cp.market_median, cp.market_avg, cp.market_max,\n  cs2.competitor_sources_count, cs2.active_competitors_count, cs2.excluded_competitors_count,\n  cs2.cs_market_min, cs2.cs_market_median, cs2.cs_market_avg, cs2.cs_market_max,\n  rd.recommendations_count,\n  gj.gap_windows, cpj.competitor_prices, oj.latest_observations,\n  sj.competitor_sources, rj.pricing_recommendations\nFROM gap_data gd, comp_prices cp, comp_sources cs2, rec_data rd,\n     gap_json gj, cp_json cpj, obs_json oj, sources_json sj, rec_json rj",
         "options": {}
       },
       "id": "revenue_query",
@@ -401,7 +405,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -523,7 +528,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT pr.id::text AS id, apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       COALESCE(\n         NULLIF(TRIM(BOTH FROM (\n           SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n           FROM (\n             SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n             FROM system_vars\n             WHERE key = 'property_context_map'\n               AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n             LIMIT 1\n           ) m\n           WHERE jsonb_typeof(m.map_json) = 'object'\n         ))), ''),\n         NULLIF(TRIM(BOTH FROM COALESCE(\n           (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n           ''\n         )), '')\n       ) AS property_context,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
+        "query": "SELECT pr.id::text AS id, apartment_id, a.name AS apartment_name,\n       to_char(pr.date_from,'YYYY-MM-DD') AS date_from,\n       to_char(pr.date_to,'YYYY-MM-DD') AS date_to,\n       pr.nights, pr.current_price::float AS current_price, pr.market_min::float AS market_min,\n       pr.market_median::float AS market_median, pr.market_avg::float AS market_avg, pr.market_max::float AS market_max,\n       pr.recommended_price::float AS recommended_price,\n       pr.recommended_guest_price::float AS recommended_guest_price,\n       pr.rc_net_price::float AS rc_net_price,\n       pr.aggregator_markup_percent::float AS aggregator_markup_percent,\n       pr.expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n       pr.direct_price::float AS direct_price,\n       pr.direct_savings_for_guest::float AS direct_savings_for_guest,\n       pr.direct_owner_gain::float AS direct_owner_gain,\n       pr.pricing_channel::text AS pricing_channel,\n       COALESCE(\n         NULLIF(TRIM(BOTH FROM (\n           SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n           FROM (\n             SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n             FROM system_vars\n             WHERE key = 'property_context_map'\n               AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n             LIMIT 1\n           ) m\n           WHERE jsonb_typeof(m.map_json) = 'object'\n         )), ''),\n         NULLIF(TRIM(BOTH FROM COALESCE(\n           (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n           ''\n         )), '')\n       ) AS property_context,\n       pr.recommendation_type,\n       pr.reason, pr.confidence::float AS confidence, pr.source, pr.status,\n       to_char(pr.created_at,'YYYY-MM-DD') AS created_at\nFROM pricing_recommendations pr\nJOIN apartments a ON a.id = pr.apartment_id\nWHERE pr.status IN ('draft','approved') AND pr.date_from >= CURRENT_DATE\nORDER BY pr.date_from, pr.apartment_id",
         "options": {}
       },
       "id": "pricing_recs_query",
@@ -539,11 +544,12 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: { ok: true, action: 'pricing_recommendations', data: rows, count: rows.length } }];"
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{ json: { ok: true, action: 'pricing_recommendations', data: rows, count: rows.length } }];"
       },
       "id": "format_pricing_recs",
       "name": "Format Pricing Recs",
@@ -600,7 +606,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO competitor_prices\n  (source, title, url, location, max_guests, rooms,\n   date_from, date_to, price_per_night, rating, reviews_count, notes)\nVALUES (\n  '{{ $json.cp_source }}',\n  '{{ $json.cp_title }}',\n  NULLIF('{{ $json.cp_url }}',''),\n  NULLIF('{{ $json.cp_location }}',''),\n  NULLIF('{{ $json.cp_max_guests }}','')::integer,\n  NULLIF('{{ $json.cp_rooms }}','')::integer,\n  '{{ $json.cp_date_from }}'::date,\n  '{{ $json.cp_date_to }}'::date,\n  {{ $json.cp_price }}::numeric,\n  NULLIF('{{ $json.cp_rating }}','')::numeric,\n  NULLIF('{{ $json.cp_reviews_count }}','')::integer,\n  NULLIF('{{ $json.cp_notes }}','')\n) RETURNING id::text AS id, source, title, price_per_night::float",
+        "query": "INSERT INTO competitor_prices\n  (source, title, url, location, max_guests, rooms,\n   date_from, date_to, price_per_night, rating, reviews_count, notes)\nVALUES (\n  '{{ String($json.cp_source ?? '').replace(/'/g, \"''\") }}',\n  '{{ String($json.cp_title ?? '').replace(/'/g, \"''\") }}',\n  NULLIF('{{ String($json.cp_url ?? '').replace(/'/g, \"''\") }}',''),\n  NULLIF('{{ String($json.cp_location ?? '').replace(/'/g, \"''\") }}',''),\n  NULLIF('{{ String($json.cp_max_guests ?? '').replace(/'/g, \"''\") }}','')::integer,\n  NULLIF('{{ String($json.cp_rooms ?? '').replace(/'/g, \"''\") }}','')::integer,\n  '{{ String($json.cp_date_from ?? '').replace(/'/g, \"''\") }}'::date,\n  '{{ String($json.cp_date_to ?? '').replace(/'/g, \"''\") }}'::date,\n  {{ $json.cp_price }}::numeric,\n  NULLIF('{{ String($json.cp_rating ?? '').replace(/'/g, \"''\") }}','')::numeric,\n  NULLIF('{{ String($json.cp_reviews_count ?? '').replace(/'/g, \"''\") }}','')::integer,\n  NULLIF('{{ String($json.cp_notes ?? '').replace(/'/g, \"''\") }}','')\n) RETURNING id::text AS id, source, title, price_per_night::float",
         "options": {}
       },
       "id": "comp_db_insert",
@@ -616,7 +622,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -668,11 +675,12 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_sources',\n  competitor_sources: rows,\n  summary: {\n    total: rows.length,\n    active: rows.filter(r=>r.status==='active').length,\n    excluded: rows.filter(r=>r.status==='excluded').length\n  }\n}}];"
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_sources',\n  competitor_sources: rows,\n  summary: {\n    total: rows.length,\n    active: rows.filter(r=>r.status==='active').length,\n    excluded: rows.filter(r=>r.status==='excluded').length\n  }\n}}];"
       },
       "id": "code-format-cs-c15",
       "name": "Format Competitor Sources",
@@ -758,11 +766,12 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
-        "jsCode": "const rows = $input.all().map(i => i.json);\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_price_observations',\n  observations: rows,\n  count: rows.length\n}}];"
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{ json: {\n  ok: true,\n  action: 'competitor_price_observations',\n  observations: rows,\n  count: rows.length\n}}];"
       },
       "id": "code-format-obs-c15",
       "name": "Format Competitor Observations",
@@ -848,7 +857,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -935,7 +945,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO competitor_price_observations\n  (competitor_source_id, stay_date_from, stay_date_to, nights, price_per_night,\n   confidence, collection_method, notes)\nVALUES\n  ('{{ $json.q_id }}', '{{ $json.q_from }}', '{{ $json.q_to }}', {{ $json.q_nights }},\n   {{ $json.q_price }}, {{ $json.q_confidence }}, 'manual_input', '{{ $json.q_notes }}');\nUPDATE competitor_sources SET last_checked_at = NOW(), updated_at = NOW()\nWHERE id = '{{ $json.q_id }}';",
+        "query": "INSERT INTO competitor_price_observations\n  (competitor_source_id, stay_date_from, stay_date_to, nights, price_per_night,\n   confidence, collection_method, notes)\nVALUES\n  ('{{ String($json.q_id ?? '').replace(/'/g, \"''\") }}', '{{ String($json.q_from ?? '').replace(/'/g, \"''\") }}', '{{ String($json.q_to ?? '').replace(/'/g, \"''\") }}', {{ $json.q_nights }},\n   {{ $json.q_price }}, {{ $json.q_confidence }}, 'manual_input', '{{ String($json.q_notes ?? '').replace(/'/g, \"''\") }}');\nUPDATE competitor_sources SET last_checked_at = NOW(), updated_at = NOW()\nWHERE id = '{{ String($json.q_id ?? '').replace(/'/g, \"''\") }}';",
         "additionalFields": {}
       },
       "id": "pg-competitor-update-c15",
@@ -951,7 +961,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -1041,7 +1052,8 @@
         "operation": "executeQuery",
         "query": "WITH old_rec AS (\n  SELECT id, status, current_price, recommended_price, apartment_id,\n         date_from, date_to\n  FROM pricing_recommendations\n  WHERE id = '{{ $json.q_rec_id }}'\n),\nupd AS (\n  UPDATE pricing_recommendations\n  SET status = 'approved', updated_at = now()\n  WHERE id = '{{ $json.q_rec_id }}' AND status IN ('draft', 'rejected')\n  RETURNING id, apartment_id, date_from, date_to, current_price, recommended_price\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status,\n     apartment_id, date_from, date_to, old_price, new_price,\n     reason, actor, source)\n  SELECT upd.id, 'approve', old_rec.status, 'approved',\n         upd.apartment_id, upd.date_from, upd.date_to,\n         upd.current_price, upd.recommended_price,\n         '{{ $json.q_reason }}', 'admin', 'admin_panel'\n  FROM upd, old_rec\n  WHERE (SELECT count(*) FROM upd) > 0\n  RETURNING id AS audit_id\n)\nSELECT\n  (SELECT count(*) FROM upd)::integer AS rows_updated,\n  (SELECT id FROM upd LIMIT 1)::text AS rec_id,\n  (SELECT audit_id FROM audit_ins LIMIT 1)::text AS audit_id,\n  (SELECT status FROM old_rec LIMIT 1) AS previous_status",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "6f98d483-ed72-4fcf-96b1-79454fb02090",
@@ -1134,7 +1146,8 @@
         "operation": "executeQuery",
         "query": "WITH old_rec AS (\n  SELECT id, status, current_price, recommended_price, apartment_id,\n         date_from, date_to\n  FROM pricing_recommendations\n  WHERE id = '{{ $json.q_rec_id }}'\n),\nupd AS (\n  UPDATE pricing_recommendations\n  SET status = 'rejected', updated_at = now()\n  WHERE id = '{{ $json.q_rec_id }}' AND status IN ('draft', 'approved')\n  RETURNING id, apartment_id, date_from, date_to, current_price, recommended_price\n),\naudit_ins AS (\n  INSERT INTO pricing_action_audit_log\n    (recommendation_id, action, previous_status, new_status,\n     apartment_id, date_from, date_to, old_price, new_price,\n     reason, actor, source)\n  SELECT upd.id, 'reject', old_rec.status, 'rejected',\n         upd.apartment_id, upd.date_from, upd.date_to,\n         upd.current_price, upd.recommended_price,\n         '{{ $json.q_reason }}', 'admin', 'admin_panel'\n  FROM upd, old_rec\n  WHERE (SELECT count(*) FROM upd) > 0\n  RETURNING id AS audit_id\n)\nSELECT\n  (SELECT count(*) FROM upd)::integer AS rows_updated,\n  (SELECT id FROM upd LIMIT 1)::text AS rec_id,\n  (SELECT audit_id FROM audit_ins LIMIT 1)::text AS audit_id,\n  (SELECT status FROM old_rec LIMIT 1) AS previous_status",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "b20a60ec-bd78-4ae6-a6d2-9a1c18428c9d",
@@ -1214,7 +1227,8 @@
         "operation": "executeQuery",
         "query": "SELECT\n  COALESCE(\n    json_agg(\n      json_build_object(\n        'id', al.id::text,\n        'recommendation_id', al.recommendation_id::text,\n        'action', al.action,\n        'previous_status', al.previous_status,\n        'new_status', al.new_status,\n        'apartment_id', al.apartment_id,\n        'date_from', to_char(al.date_from, 'YYYY-MM-DD'),\n        'date_to', to_char(al.date_to, 'YYYY-MM-DD'),\n        'old_price', al.old_price::float,\n        'new_price', al.new_price::float,\n        'reason', al.reason,\n        'actor', al.actor,\n        'source', al.source,\n        'metadata', al.metadata,\n        'created_at', to_char(al.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')\n      )\n      ORDER BY al.created_at DESC\n    ),\n    '[]'::json\n  ) AS audit_data,\n  COUNT(*)::integer AS total\nFROM (\n  SELECT * FROM pricing_action_audit_log\n  ORDER BY created_at DESC LIMIT 50\n) al",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "7686f4ca-0223-4f0a-827a-6b691fa85ec3",
@@ -1308,7 +1322,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "format-market-history",
@@ -1320,7 +1335,7 @@
         2300
       ],
       "parameters": {
-        "jsCode": "\nconst rows = $input.all().map(i => i.json);\n// Overall freshness summary\nconst totalFresh = rows.reduce((s, r) => s + (r.fresh_count || 0), 0);\nconst totalStale = rows.reduce((s, r) => s + (r.stale_count || 0), 0);\nconst latestDate = rows.length > 0 ? rows[0].obs_date : null;\nreturn [{\n  json: {\n    ok: true,\n    action: 'market_history',\n    count: rows.length,\n    total_observations: rows.reduce((s, r) => s + (r.count || 0), 0),\n    total_fresh: totalFresh,\n    total_stale: totalStale,\n    latest_obs_date: latestDate,\n    data: rows\n  }\n}];\n"
+        "jsCode": "\nconst rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\n// Overall freshness summary\nconst totalFresh = rows.reduce((s, r) => s + (r.fresh_count || 0), 0);\nconst totalStale = rows.reduce((s, r) => s + (r.stale_count || 0), 0);\nconst latestDate = rows.length > 0 ? rows[0].obs_date : null;\nreturn [{\n  json: {\n    ok: true,\n    action: 'market_history',\n    count: rows.length,\n    total_observations: rows.reduce((s, r) => s + (r.count || 0), 0),\n    total_fresh: totalFresh,\n    total_stale: totalStale,\n    latest_obs_date: latestDate,\n    data: rows\n  }\n}];\n"
       }
     },
     {
@@ -1404,7 +1419,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "format-add-obs",
@@ -1517,7 +1533,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "format-export-rc",
@@ -1551,7 +1568,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "format-export-final",
@@ -1634,7 +1652,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "format-mark-applied",
@@ -1717,7 +1736,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "format-mark-failed",
@@ -1783,7 +1803,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH rec_status AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,\n    COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,\n    COUNT(*) FILTER (WHERE status = 'exported') AS exported_count,\n    COUNT(*) FILTER (WHERE status = 'manually_applied') AS manually_applied_count,\n    COUNT(*) FILTER (WHERE status = 'apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_summary AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_stats AS (\n  SELECT\n    COUNT(*) FILTER (WHERE cs.status = 'active') AS active_competitors,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at < NOW() - INTERVAL '14 days'\n    ) AS stale_obs,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at >= NOW() - INTERVAL '14 days'\n    ) AS fresh_obs,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night)\n      FILTER (WHERE cs.status = 'active' AND cs.similarity_score >= 80) AS market_median\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\ntop_gaps AS (\n  SELECT COALESCE(json_agg(row_to_json(g) ORDER BY (g.estimated_loss) DESC NULLS LAST), '[]'::json) AS data\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights,\n           COALESCE(estimated_loss, 0) AS estimated_loss, recommendation\n    FROM gap_windows\n    WHERE status = 'open'\n    ORDER BY estimated_loss DESC NULLS LAST\n    LIMIT 3\n  ) g\n),\ntop_recs AS (\n  SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) AS data\n  FROM (\n    SELECT id::text AS id, apartment_id,\n           to_char(date_from,'YYYY-MM-DD') AS date_from,\n           to_char(date_to,'YYYY-MM-DD') AS date_to,\n           nights,\n           recommended_price::float, current_price::float, market_median::float,\n           recommended_guest_price::float AS recommended_guest_price,\n           rc_net_price::float AS rc_net_price,\n           aggregator_markup_percent::float AS aggregator_markup_percent,\n           expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n           direct_price::float AS direct_price,\n           direct_savings_for_guest::float AS direct_savings_for_guest,\n           direct_owner_gain::float AS direct_owner_gain,\n           pricing_channel,\n           COALESCE(\n             NULLIF(TRIM(BOTH FROM (\n               SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n               FROM (\n                 SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n                 FROM system_vars\n                 WHERE key = 'property_context_map'\n                   AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n                 LIMIT 1\n               ) m\n               WHERE jsonb_typeof(m.map_json) = 'object'\n             ))), ''),\n             NULLIF(TRIM(BOTH FROM COALESCE(\n               (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n               ''\n             )), '')\n           ) AS property_context,\n           recommendation_type, reason, status, confidence::float AS confidence\n    FROM pricing_recommendations pr\n    WHERE status IN ('draft', 'approved', 'exported', 'apply_failed')\n    ORDER BY\n      CASE status\n        WHEN 'apply_failed' THEN 1\n        WHEN 'exported' THEN 2\n        WHEN 'approved' THEN 3\n        WHEN 'draft' THEN 4\n        ELSE 5\n      END,\n      created_at DESC\n    LIMIT 5\n  ) r\n),\nlatest_audit AS (\n  SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) AS data\n  FROM (\n    SELECT id, action, previous_status, new_status,\n           apartment_id, date_from, date_to, old_price, new_price,\n           reason, actor, created_at\n    FROM pricing_action_audit_log\n    ORDER BY created_at DESC\n    LIMIT 5\n  ) a\n)\nSELECT\n  rs.draft_count, rs.approved_count, rs.exported_count,\n  rs.manually_applied_count, rs.apply_failed_count,\n  gs.total_gaps, gs.total_estimated_loss,\n  cs.active_competitors, cs.stale_obs, cs.fresh_obs, cs.market_median,\n  tg.data AS top_gaps,\n  tr.data AS top_recs,\n  la.data AS latest_audit,\n  (SELECT value FROM system_vars WHERE key = 'aggregator_markup_percent' LIMIT 1) AS aggregator_markup_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_discount_percent' LIMIT 1) AS direct_discount_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_booking_enabled' LIMIT 1) AS direct_booking_enabled_var\nFROM rec_status rs, gap_summary gs, comp_stats cs,\n     top_gaps tg, top_recs tr, latest_audit la",
+        "query": "WITH rec_status AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,\n    COUNT(*) FILTER (WHERE status = 'approved') AS approved_count,\n    COUNT(*) FILTER (WHERE status = 'exported') AS exported_count,\n    COUNT(*) FILTER (WHERE status = 'manually_applied') AS manually_applied_count,\n    COUNT(*) FILTER (WHERE status = 'apply_failed') AS apply_failed_count\n  FROM pricing_recommendations\n),\ngap_summary AS (\n  SELECT\n    COUNT(*) AS total_gaps,\n    COALESCE(SUM(estimated_loss), 0) AS total_estimated_loss\n  FROM gap_windows\n  WHERE status = 'open'\n),\ncomp_stats AS (\n  SELECT\n    COUNT(*) FILTER (WHERE cs.status = 'active') AS active_competitors,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at < NOW() - INTERVAL '14 days'\n    ) AS stale_obs,\n    COUNT(DISTINCT cpo.id) FILTER (\n      WHERE cs.status = 'active'\n        AND cpo.observed_at >= NOW() - INTERVAL '14 days'\n    ) AS fresh_obs,\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night)\n      FILTER (WHERE cs.status = 'active' AND cs.similarity_score >= 80) AS market_median\n  FROM competitor_sources cs\n  LEFT JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n),\ntop_gaps AS (\n  SELECT COALESCE(json_agg(row_to_json(g) ORDER BY (g.estimated_loss) DESC NULLS LAST), '[]'::json) AS data\n  FROM (\n    SELECT apartment_id, gap_start, gap_end, nights,\n           COALESCE(estimated_loss, 0) AS estimated_loss, recommendation\n    FROM gap_windows\n    WHERE status = 'open'\n    ORDER BY estimated_loss DESC NULLS LAST\n    LIMIT 3\n  ) g\n),\ntop_recs AS (\n  SELECT COALESCE(json_agg(row_to_json(r)), '[]'::json) AS data\n  FROM (\n    SELECT id::text AS id, apartment_id,\n           to_char(date_from,'YYYY-MM-DD') AS date_from,\n           to_char(date_to,'YYYY-MM-DD') AS date_to,\n           nights,\n           recommended_price::float, current_price::float, market_median::float,\n           recommended_guest_price::float AS recommended_guest_price,\n           rc_net_price::float AS rc_net_price,\n           aggregator_markup_percent::float AS aggregator_markup_percent,\n           expected_aggregator_guest_price::float AS expected_aggregator_guest_price,\n           direct_price::float AS direct_price,\n           direct_savings_for_guest::float AS direct_savings_for_guest,\n           direct_owner_gain::float AS direct_owner_gain,\n           pricing_channel,\n           COALESCE(\n             NULLIF(TRIM(BOTH FROM (\n               SELECT (m.map_json ->> TRIM(BOTH FROM pr.apartment_id::text))\n               FROM (\n                 SELECT TRIM(BOTH FROM value)::jsonb AS map_json\n                 FROM system_vars\n                 WHERE key = 'property_context_map'\n                   AND TRIM(BOTH FROM COALESCE(value, '')) <> ''\n                 LIMIT 1\n               ) m\n               WHERE jsonb_typeof(m.map_json) = 'object'\n             )), ''),\n             NULLIF(TRIM(BOTH FROM COALESCE(\n               (SELECT value FROM system_vars WHERE key = 'default_property_context' LIMIT 1),\n               ''\n             )), '')\n           ) AS property_context,\n           recommendation_type, reason, status, confidence::float AS confidence\n    FROM pricing_recommendations pr\n    WHERE status IN ('draft', 'approved', 'exported', 'apply_failed')\n    ORDER BY\n      CASE status\n        WHEN 'apply_failed' THEN 1\n        WHEN 'exported' THEN 2\n        WHEN 'approved' THEN 3\n        WHEN 'draft' THEN 4\n        ELSE 5\n      END,\n      created_at DESC\n    LIMIT 5\n  ) r\n),\nlatest_audit AS (\n  SELECT COALESCE(json_agg(row_to_json(a)), '[]'::json) AS data\n  FROM (\n    SELECT id, action, previous_status, new_status,\n           apartment_id, date_from, date_to, old_price, new_price,\n           reason, actor, created_at\n    FROM pricing_action_audit_log\n    ORDER BY created_at DESC\n    LIMIT 5\n  ) a\n)\nSELECT\n  rs.draft_count, rs.approved_count, rs.exported_count,\n  rs.manually_applied_count, rs.apply_failed_count,\n  gs.total_gaps, gs.total_estimated_loss,\n  cs.active_competitors, cs.stale_obs, cs.fresh_obs, cs.market_median,\n  tg.data AS top_gaps,\n  tr.data AS top_recs,\n  la.data AS latest_audit,\n  (SELECT value FROM system_vars WHERE key = 'aggregator_markup_percent' LIMIT 1) AS aggregator_markup_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_discount_percent' LIMIT 1) AS direct_discount_percent_var,\n  (SELECT value FROM system_vars WHERE key = 'direct_booking_enabled' LIMIT 1) AS direct_booking_enabled_var\nFROM rec_status rs, gap_summary gs, comp_stats cs,\n     top_gaps tg, top_recs tr, latest_audit la",
         "options": {}
       },
       "id": "revenue-dashboard-query",
@@ -1799,7 +1819,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -1882,7 +1903,8 @@
           "id": "gelendzhik_db",
           "name": "Gelendzhik DB"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -1965,7 +1987,8 @@
         "operation": "executeQuery",
         "query": "\nSELECT\n  cc.code,\n  cc.name,\n  cc.target_apartment_ids,\n  cc.min_guests,\n  cc.max_guests,\n  cc.min_area_m2,\n  cc.max_area_m2,\n  cc.property_types,\n  cc.price_min,\n  cc.price_max,\n  cc.is_active,\n  COALESCE(src_stats.active_count, 0) AS active_sources,\n  COALESCE(obs_stats.obs_count, 0)    AS observations_count,\n  obs_stats.latest_obs,\n  obs_stats.market_median\nFROM competitor_cohorts cc\nLEFT JOIN (\n  SELECT cohort_code, COUNT(*) AS active_count\n  FROM competitor_sources\n  WHERE status IN ('active','approved') AND discovery_status IN ('seeded','approved')\n  GROUP BY cohort_code\n) src_stats ON src_stats.cohort_code = cc.code\nLEFT JOIN (\n  SELECT cs.cohort_code,\n         COUNT(cpo.id) AS obs_count,\n         MAX(cpo.observed_at) AS latest_obs,\n         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) AS market_median\n  FROM competitor_sources cs\n  JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n  WHERE cs.status IN ('active','approved')\n  GROUP BY cs.cohort_code\n) obs_stats ON obs_stats.cohort_code = cc.code\nORDER BY cc.is_active DESC, cc.code\n",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "fmt-cohorts",
@@ -1977,7 +2000,7 @@
         4900
       ],
       "parameters": {
-        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    cohorts: rows,\n    count: rows.length\n  }\n}];\n",
+        "jsCode": "\nconst rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{\n  json: {\n    ok: true,\n    cohorts: rows,\n    count: rows.length\n  }\n}];\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -2048,7 +2071,8 @@
         "operation": "executeQuery",
         "query": "\nSELECT\n  cs.id,\n  cs.name,\n  cs.url,\n  cs.source_platform,\n  cs.cohort_code,\n  cs.target_apartment_ids,\n  cs.similarity_score,\n  cs.signal_quality_score,\n  cs.discovery_status,\n  cs.status,\n  cs.data_quality_notes,\n  cs.selection_reason,\n  cs.created_at\nFROM competitor_sources cs\nWHERE cs.discovery_status IN ('candidate','needs_review')\nORDER BY cs.created_at DESC\n",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "fmt-candidates",
@@ -2060,7 +2084,7 @@
         5500
       ],
       "parameters": {
-        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    candidates: rows,\n    count: rows.length\n  }\n}];\n",
+        "jsCode": "\nconst rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{\n  json: {\n    ok: true,\n    candidates: rows,\n    count: rows.length\n  }\n}];\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -2129,9 +2153,10 @@
       },
       "parameters": {
         "operation": "executeQuery",
-        "query": "\nUPDATE competitor_sources\nSET status = 'approved',\n    discovery_status = 'approved',\n    updated_at = NOW()\nWHERE id = '{{ $json.source_id }}'\n  AND discovery_status IN ('candidate','needs_review')\nRETURNING id, name, status, discovery_status\n",
+        "query": "\nUPDATE competitor_sources\nSET status = 'approved',\n    discovery_status = 'approved',\n    updated_at = NOW()\nWHERE id = '{{ String($('Webhook').first().json.body.source_id ?? '').replace(/'/g, \"''\") }}'\n  AND discovery_status IN ('candidate','needs_review')\nRETURNING id, name, status, discovery_status\n",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "fmt-approve-cand",
@@ -2143,7 +2168,7 @@
         6100
       ],
       "parameters": {
-        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    updated: rows,\n    message: rows.length > 0 ? 'Кандидат одобрен' : 'Источник не найден или уже обработан'\n  }\n}];\n",
+        "jsCode": "\nconst rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{\n  json: {\n    ok: true,\n    updated: rows,\n    message: rows.length > 0 ? 'Кандидат одобрен' : 'Источник не найден или уже обработан'\n  }\n}];\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -2212,9 +2237,10 @@
       },
       "parameters": {
         "operation": "executeQuery",
-        "query": "\nUPDATE competitor_sources\nSET status = 'excluded',\n    discovery_status = 'rejected',\n    exclusion_reason = '{{ $json.reason }}',\n    updated_at = NOW()\nWHERE id = '{{ $json.source_id }}'\n  AND discovery_status IN ('candidate','needs_review')\nRETURNING id, name, status, discovery_status\n",
+        "query": "\nUPDATE competitor_sources\nSET status = 'excluded',\n    discovery_status = 'rejected',\n    exclusion_reason = '{{ String($('Webhook').first().json.body.reason ?? '').replace(/'/g, \"''\") }}',\n    updated_at = NOW()\nWHERE id = '{{ String($('Webhook').first().json.body.source_id ?? '').replace(/'/g, \"''\") }}'\n  AND discovery_status IN ('candidate','needs_review')\nRETURNING id, name, status, discovery_status\n",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "fmt-reject-cand",
@@ -2226,7 +2252,7 @@
         6700
       ],
       "parameters": {
-        "jsCode": "\nconst rows = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    ok: true,\n    updated: rows,\n    message: rows.length > 0 ? 'Кандидат отклонён' : 'Источник не найден или уже обработан'\n  }\n}];\n",
+        "jsCode": "\nconst rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nreturn [{\n  json: {\n    ok: true,\n    updated: rows,\n    message: rows.length > 0 ? 'Кандидат отклонён' : 'Источник не найден или уже обработан'\n  }\n}];\n",
         "mode": "runOnceForAllItems"
       }
     },
@@ -2297,7 +2323,8 @@
         "operation": "executeQuery",
         "query": "\nWITH cohort_data AS (\n  SELECT\n    cc.code AS cohort_code,\n    cc.name AS cohort_name,\n    cc.target_apartment_ids,\n    COALESCE(s.active_count, 0) AS active_count,\n    COALESCE(o.fresh_count, 0)  AS fresh_obs,\n    COALESCE(o.total_obs, 0)    AS total_obs,\n    o.market_median,\n    o.market_min,\n    o.market_max,\n    o.latest_obs,\n    CASE\n      WHEN COALESCE(s.active_count, 0) >= 5 AND COALESCE(o.fresh_count, 0) >= 3 THEN 'high'\n      WHEN COALESCE(s.active_count, 0) >= 3 AND COALESCE(o.fresh_count, 0) >= 1 THEN 'medium'\n      ELSE 'low'\n    END AS data_quality\n  FROM competitor_cohorts cc\n  LEFT JOIN (\n    SELECT cohort_code, COUNT(*) AS active_count\n    FROM competitor_sources\n    WHERE status IN ('active','approved') AND discovery_status IN ('seeded','approved')\n    GROUP BY cohort_code\n  ) s ON s.cohort_code = cc.code\n  LEFT JOIN (\n    SELECT cs.cohort_code,\n           COUNT(cpo.id) AS total_obs,\n           COUNT(cpo.id) FILTER (WHERE (NOW() - cpo.observed_at) <= INTERVAL '14 days') AS fresh_count,\n           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cpo.price_per_night) AS market_median,\n           MIN(cpo.price_per_night) AS market_min,\n           MAX(cpo.price_per_night) AS market_max,\n           MAX(cpo.observed_at) AS latest_obs\n    FROM competitor_sources cs\n    JOIN competitor_price_observations cpo ON cpo.competitor_source_id = cs.id\n    WHERE cs.status IN ('active','approved')\n    GROUP BY cs.cohort_code\n  ) o ON o.cohort_code = cc.code\n  WHERE cc.is_active = TRUE\n),\napt_coverage AS (\n  SELECT\n    apt_id,\n    cohort_code,\n    active_count,\n    fresh_obs,\n    total_obs,\n    market_median,\n    data_quality,\n    CASE\n      WHEN cohort_code = 'large_family_house_territory' AND active_count < 3 THEN TRUE\n      ELSE FALSE\n    END AS needs_attention\n  FROM cohort_data, unnest(target_apartment_ids) AS apt_id\n  WHERE cohort_code != 'gelendzhik_background_market'\n)\nSELECT\n  (SELECT json_agg(row_to_json(cd)) FROM cohort_data cd) AS cohorts,\n  (SELECT json_agg(row_to_json(ac)) FROM apt_coverage ac) AS apt_coverage,\n  (SELECT COUNT(*) FROM competitor_sources WHERE discovery_status IN ('candidate','needs_review')) AS candidates_pending,\n  (SELECT bool_or(needs_attention) FROM apt_coverage) AS has_attention_needed,\n  (SELECT json_agg(json_build_object('apt_id', apt_id, 'cohort', cohort_code, 'issue', 'insufficient_sources'))\n   FROM apt_coverage WHERE needs_attention) AS attention_items\n",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "fmt-cohort-summary",
@@ -2472,7 +2499,8 @@
         "operation": "executeQuery",
         "query": "SELECT key, value FROM system_vars WHERE key IN ('property_context_map', 'default_property_context') ORDER BY key;",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "pcs-co-read-fmt",
@@ -2484,7 +2512,7 @@
         420
       ],
       "parameters": {
-        "jsCode": "const rows = $input.all().map(i => i.json);\nconst mapRow = rows.find(r => r.key === 'property_context_map');\nconst defRow = rows.find(r => r.key === 'default_property_context');\nlet mapObj = {};\nif (mapRow?.value != null && String(mapRow.value).trim() !== '') {\n  try {\n    const parsed = JSON.parse(String(mapRow.value));\n    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {\n      for (const [k, v] of Object.entries(parsed)) {\n        const ks = String(k).trim();\n        if (!ks) continue;\n        let vs = v == null ? '' : String(v).trim();\n        if (!vs) continue;\n        mapObj[ks] = vs;\n      }\n    }\n  } catch (_) {\n    mapObj = {};\n  }\n}\nlet dr = defRow?.value != null ? String(defRow.value) : '';\ndr = dr.trim();\nreturn [{\n  json: {\n    ok: true,\n    property_context_map: mapObj,\n    default_property_context: dr === '' ? null : dr,\n  },\n}];",
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && !(Object.keys(r).length === 1 && r.success === true));\nconst mapRow = rows.find(r => r.key === 'property_context_map');\nconst defRow = rows.find(r => r.key === 'default_property_context');\nlet mapObj = {};\nif (mapRow?.value != null && String(mapRow.value).trim() !== '') {\n  try {\n    const parsed = JSON.parse(String(mapRow.value));\n    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {\n      for (const [k, v] of Object.entries(parsed)) {\n        const ks = String(k).trim();\n        if (!ks) continue;\n        let vs = v == null ? '' : String(v).trim();\n        if (!vs) continue;\n        mapObj[ks] = vs;\n      }\n    }\n  } catch (_) {\n    mapObj = {};\n  }\n}\nlet dr = defRow?.value != null ? String(defRow.value) : '';\ndr = dr.trim();\nreturn [{\n  json: {\n    ok: true,\n    property_context_map: mapObj,\n    default_property_context: dr === '' ? null : dr,\n  },\n}];",
         "mode": "runOnceForAllItems"
       }
     },
@@ -2524,7 +2552,8 @@
         "operation": "executeQuery",
         "query": "={{ $json.q_save_sql }}",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "pcs-co-save-fmt",
@@ -2576,7 +2605,8 @@
         "operation": "executeQuery",
         "query": "SELECT\n  COALESCE(MAX(CASE WHEN key = 'property_context_map' THEN value END), '') AS map_val,\n  COALESCE(MAX(CASE WHEN key = 'default_property_context' THEN value END), '') AS def_val\nFROM system_vars\nWHERE key IN ('property_context_map', 'default_property_context');",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "pcs-co-build-audit",
@@ -2717,7 +2747,8 @@
         "operation": "executeQuery",
         "query": "={{ $json.q_audit_sql }}",
         "options": {}
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "mrl-co-fmt",

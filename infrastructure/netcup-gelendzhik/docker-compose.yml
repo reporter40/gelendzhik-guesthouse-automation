@@ -58,10 +58,10 @@ services:
       N8N_PROXY_HOPS: "1"
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_SKIP_WEBHOOK_DEREGISTRATION_SHUTDOWN: "true"
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      N8N_GRACEFUL_SHUTDOWN_TIMEOUT: "30"             # дать идущим запускам закончиться при рестарте
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: "168"
       NODE_ENV: production
@@ -73,6 +73,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
     restart: unless-stopped
+    stop_grace_period: 45s                          # > N8N_GRACEFUL_SHUTDOWN_TIMEOUT
     networks: [gelendzhik-net]
 
   cloudflared:

@@ -95,3 +95,29 @@ curl -s localhost:5678/healthz
 - выключить автозапуск: `launchctl unload ~/Library/LaunchAgents/com.aquatoring.colima.plist`
   (cloudflared уже выгружен на шаге 1);
 - данные на Маке не удалять — резерв.
+
+## Пакет «админка + надёжное расписание» (14.10.2026)
+
+Что входит (`infrastructure/netcup-gelendzhik/deploy_bundle.sh`, один скрипт для теста и боя):
+- миграции c23, c34 (одной транзакцией, `psql -1`), удаление 3 кандидатов-заглушек c34 (`c34_remove_placeholders.sql`), c36, c38;
+- WF10 Admin API = `workflows/10_admin_api.json` (версия из репо + исправления: лишняя скобка в property_context в 3 запросах,
+  `alwaysOutputData` у всех Postgres-узлов + фильтр пустых строк и `{success:true}` в Format-узлах, экранирование кавычек
+  в 4 запросах, кандидаты берут `source_id`/`reason` из тела вебхука — раньше всегда было пусто);
+- WF01: расписание `15,45 * * * *` вместо «каждые 30 мин» (интервал сбрасывался при каждом рестарте);
+- compose: `N8N_GRACEFUL_SHUTDOWN_TIMEOUT=30`, `stop_grace_period: 45s`.
+
+Проверено до боя на изолированном контуре (`test_stack.sh`: свой Postgres в сети gtest-net, боевая база недостижима —
+подтверждено расхождением числа шаблонов 14/15): `admin_smoke.sh` 16/16 read, `admin_write_smoke.sh` 15/15 write
+(в т.ч. апострофы сохраняются без искажений), vitest admin: 160/161 (1 падение — тест WF02-файла, падает и без пакета).
+
+### Откат пакета
+```bash
+# WF10 → прежняя боевая версия
+docker exec gelendzhik-n8n n8n publish:workflow --id=82575887-be9e-4267-8e8e-2d760de2a986 --versionId=f0e381b9-cc57-4b34-8157-01268bdaba6f
+# WF01 → прежняя версия (интервал 30 мин)
+docker exec gelendzhik-n8n n8n publish:workflow --id=4a846531ec22acc6 --versionId=4eacbe4b-7a67-432a-a521-8621af645ea0
+docker stop -t 40 gelendzhik-n8n && docker compose up -d n8n
+```
+Схему не откатываем: c34/c38 только добавляют, старые WF10/WF02 берут явные списки колонок.
+Данные c34/c38 (когорты, пересчёт 4 рекомендаций) — только из дампа до пакета (`/root/backups/daily/` за 14.10 до 15:40 МСК),
+восстанавливать в отдельную базу и переносить выборочно, не поверх боевой.
