@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Отправить тестовое сообщение в канал владельца (проверка цепочки оповещения)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,6 +61,7 @@ jobs:
           if [ -n "$fail" ] && { [ "$prev" = ok ] || [ $((now - last)) -ge 3600 ]; }; then send=down; echo "$now" > state/last_alert; fi
           if [ -z "$fail" ] && [ "$prev" = down ]; then send=up; fi
           [ -f state/last_alert ] || echo "$last" > state/last_alert
+          [ "${{ inputs.test_alert }}" = true ] && send=test
           echo "send=$send" >> "$GITHUB_OUTPUT"
           echo "status: ${fail:-ok} (prev=$prev, send=$send)"
 
@@ -67,12 +73,15 @@ jobs:
           SEND: ${{ steps.probe.outputs.send }}
           FAIL: ${{ steps.probe.outputs.fail }}
         run: |
-          if [ "$SEND" = down ]; then
+          if [ "$SEND" = test ]; then
+            text="🧪 Тест сторожа гостевого дома: цепочка оповещения работает. Сервер сейчас: ${FAIL:-отвечает}."
+          elif [ "$SEND" = down ]; then
             text="⚠️ Гостевой дом: сервер не отвечает ($FAIL). Боты и синхронизация могут не работать. Проверка каждые 10 минут."
           else
             text="✅ Гостевой дом: сервер снова отвечает."
           fi
-          curl -s -m 20 "https://api.telegram.org/bot${BOT}/sendMessage" --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=${text}" > /dev/null
+          resp=$(curl -s -m 20 "https://api.telegram.org/bot${BOT}/sendMessage" --data-urlencode "chat_id=${CHAT}" --data-urlencode "text=${text}")
+          echo "$resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("telegram ok:", d.get("ok"), d.get("description","")); sys.exit(0 if d.get("ok") else 1)'
 
       - name: Save state
         if: always()
