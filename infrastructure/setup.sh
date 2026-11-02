@@ -51,7 +51,17 @@ else
     log ".env существует — пропускаем"
 fi
 
+# 5. Fail closed until the exact, verified n8n 2.x image tag is set.
+if ! grep -Eq '^N8N_VERSION_MINOR=[0-9]+$' .env || ! grep -Eq '^N8N_VERSION_PATCH=[0-9]+$' .env; then
+    warn "Запуск остановлен: укажите проверенную версию n8n 2.x в .env."
+    warn "На существующем сервере проверьте: docker exec gelendzhik-n8n n8n --version"
+    warn "Для 2.39.1 (пример формата) укажите minor=39 и patch=1."
+    exit 1
+fi
+
 # 5. Запуск
+log "Проверка конфигурации Docker Compose..."
+docker compose config -q
 log "Запуск контейнеров..."
 docker compose up -d
 

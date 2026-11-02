@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 # Gelendzhik Guesthouse Automation Stack
-# n8n 2.x + PostgreSQL 16 + Qdrant + Whisper + Nginx Proxy Manager
+# n8n 2.x exact patch pinned in .env + PostgreSQL 16 + Qdrant + Whisper + Nginx Proxy Manager
 # Март 2026
 # ═══════════════════════════════════════════════════════════════
 services:
@@ -28,7 +28,7 @@ services:
 
   # ── N8N 2.x ────────────────────────────────────────────────
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n:2.${N8N_VERSION_MINOR:?Set verified N8N_VERSION_MINOR in infrastructure/.env}.${N8N_VERSION_PATCH:?Set verified N8N_VERSION_PATCH in infrastructure/.env}
     container_name: gelendzhik-n8n
     ports:
       - "5678:5678"

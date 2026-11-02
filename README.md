@@ -27,6 +27,8 @@ chmod +x infrastructure/setup.sh
 sudo infrastructure/setup.sh
 ```
 
+Before setup, fill N8N_VERSION_MINOR and N8N_VERSION_PATCH in infrastructure/.env using a verified exact 2.x version. Compose pins major 2 and stops if either value is blank. On an existing server, inspect the running container first; do not infer the version from this README.
+
 ## Структура
 - `infrastructure/`: Docker Compose, setup скрипт, env шаблон
 - `database/`: PostgreSQL схема, бэкап скрипт
@@ -59,6 +61,7 @@ sudo infrastructure/setup.sh
 
 ## Документация
 - [Развёртывание](docs/DEPLOYMENT.md)
+- [Проверка совместимости n8n v3 и откат](docs/N8N_V3_READINESS.md)
 - [Адаптация под клиента](docs/CUSTOMIZATION.md)
 - [Настройка RealtyCalendar](docs/RC_SETUP.md)
 - [Тарифы тиражирования](docs/PRICING_TIERS.md)

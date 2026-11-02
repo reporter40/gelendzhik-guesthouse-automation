@@ -14,6 +14,10 @@ chmod +x setup.sh
 sudo ./setup.sh
 ```
 
+В .env заполните N8N_VERSION_MINOR и N8N_VERSION_PATCH по точной проверенной версии 2.x. На существующем сервере сначала выполните docker exec gelendzhik-n8n n8n --version. Установщик остановится при пустых или нечисловых значениях. Не переносите версию из старого примера.
+
+Перед обновлением используйте [план проверки и отката n8n v3](N8N_V3_READINESS.md).
+
 ## После запуска
 1. http://IP:81 → NPM → добавить домен → SSL Let's Encrypt
 2. https://n8n.domain.ru → пройти онбординг
